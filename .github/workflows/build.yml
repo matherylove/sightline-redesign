@@ -1,0 +1,79 @@
+name: Build (MinGW x86 — XP compat)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-mingw-x86:
+    name: MinGW-w64 i686 (Windows XP target)
+    runs-on: windows-latest
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Install MinGW-w64 i686 via MSYS2 ────────────────
+      - name: Set up MSYS2 + MinGW i686
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW32
+          update: true
+          install: |
+            mingw-w64-i686-gcc
+            mingw-w64-i686-cmake
+            mingw-w64-i686-make
+
+      # ── 3. Cache ImGui source ───────────────────────────────
+      - name: Cache Dear ImGui v1.90.9
+        id: cache-imgui
+        uses: actions/cache@v4
+        with:
+          path: imgui
+          key: imgui-1.90.9
+
+      - name: Download Dear ImGui v1.90.9
+        if: steps.cache-imgui.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/ocornut/imgui/archive/refs/tags/v1.90.9.zip'
+          $zip = 'imgui.zip'
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Expand-Archive $zip -DestinationPath .
+          Rename-Item imgui-1.90.9 imgui
+
+      # ── 4. Build ────────────────────────────────────────────
+      - name: Build SightlinePlayer.exe
+        shell: msys2 {0}
+        run: |
+          set -e
+
+          IMGUI=imgui
+
+          SRC="src/main.cpp \
+              $IMGUI/imgui.cpp \
+              $IMGUI/imgui_draw.cpp \
+              $IMGUI/imgui_tables.cpp \
+              $IMGUI/imgui_widgets.cpp \
+              $IMGUI/backends/imgui_impl_win32.cpp \
+              $IMGUI/backends/imgui_impl_dx9.cpp"
+
+          INC="-I$IMGUI -I$IMGUI/backends"
+          DEFS="-DWINVER=0x0501 -D_WIN32_WINNT=0x0501 -DWIN32_LEAN_AND_MEAN"
+          FLAGS="-m32 -O2 -mwindows -static -static-libgcc -static-libstdc++"
+          LIBS="-ld3d9 -luser32 -lgdi32 -lshell32"
+
+          g++ $FLAGS $DEFS $INC $SRC -o SightlinePlayer.exe $LIBS
+
+          echo "Build OK — $(du -h SightlinePlayer.exe)"
+
+      # ── 5. Upload artifact ──────────────────────────────────
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SightlinePlayer-x86-XPcompat
+          path: SightlinePlayer.exe
+          retention-days: 30
