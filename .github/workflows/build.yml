@@ -16,7 +16,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Install MinGW-w64 i686 + xxd via MSYS2 ─────────
+      # ── 2. Install MinGW-w64 i686 via MSYS2 ────────────────
       - name: Set up MSYS2 + MinGW i686
         uses: msys2/setup-msys2@v2
         with:
@@ -26,7 +26,7 @@ jobs:
             mingw-w64-i686-gcc
             mingw-w64-i686-cmake
             mingw-w64-i686-make
-            vim
+            mingw-w64-i686-tools-git
 
       # ── 3. Cache ImGui source ───────────────────────────────
       - name: Cache Dear ImGui v1.90.9
@@ -46,25 +46,27 @@ jobs:
           Expand-Archive $zip -DestinationPath .
           Rename-Item imgui-1.90.9 imgui
 
-      # ── 4. Download Cousine font + generate embedded header ─
-      - name: Embed Cousine-Regular.ttf as C array
+      # ── 4. Generate embedded font header ───────────────────
+      # xxd -i converts the TTF binary into a C array (const unsigned char[]).
+      # This bakes ProggyVector into the EXE — no external .ttf needed at runtime.
+      - name: Generate font_proggy.h from ProggyVector.ttf
         shell: msys2 {0}
         run: |
           set -e
-          TTF="imgui/misc/fonts/Cousine-Regular.ttf"
-          if [ ! -f "$TTF" ]; then
-            echo "ERROR: $TTF not found after ImGui download" && exit 1
+          TTF="imgui/misc/fonts/ProggyVector.ttf"
+          OUT="src/font_proggy.h"
+          if [ -f "$TTF" ]; then
+            echo "Generating $OUT from $TTF ..."
+            # xxd -i outputs: unsigned char name[] = {...}; unsigned int name_len = NNN;
+            xxd -i "$TTF" | sed \
+              -e 's/unsigned char imgui_misc_fonts_ProggyVector_ttf/const unsigned char proggy_vector_ttf/g' \
+              -e 's/unsigned int imgui_misc_fonts_ProggyVector_ttf_len/const unsigned int proggy_vector_ttf_len/g' \
+              > "$OUT"
+            echo "OK — $(wc -c < $OUT) bytes written to $OUT"
+          else
+            echo "WARNING: $TTF not found — font will fall back to file/system fonts"
+            echo '// font_proggy.h — placeholder (ProggyVector.ttf not found at build time)' > "$OUT"
           fi
-          # xxd -i generates:  unsigned char name[] = { ... };
-          #                    unsigned int  name_len = NNN;
-          # We wrap it in a header with our own names.
-          echo '#pragma once' > src/font_cousine.h
-          echo '// AUTO-GENERATED — do not edit' >> src/font_cousine.h
-          xxd -i "$TTF" | \
-            sed 's/unsigned char imgui_misc_fonts_Cousine_Regular_ttf/static const unsigned char cousine_ttf_data/g' | \
-            sed 's/unsigned int imgui_misc_fonts_Cousine_Regular_ttf_len/static const unsigned int cousine_ttf_size/g' \
-            >> src/font_cousine.h
-          echo "Font header generated: $(wc -l < src/font_cousine.h) lines"
 
       # ── 5. Build ────────────────────────────────────────────
       - name: Build SightlinePlayer.exe
