@@ -64,7 +64,10 @@ jobs:
           INC="-I$IMGUI -I$IMGUI/backends"
           DEFS="-DWINVER=0x0501 -D_WIN32_WINNT=0x0501 -DWIN32_LEAN_AND_MEAN"
           FLAGS="-m32 -O2 -mwindows -static -static-libgcc -static-libstdc++"
-          LIBS="-ld3d9 -luser32 -lgdi32 -lshell32"
+          # dwmapi: needed by imgui_impl_win32 for DwmIsCompositionEnabled /
+          #         DwmGetColorizationColor / DwmEnableBlurBehindWindow.
+          # dwmapi.dll ships on XP SP3+ (Vista+ natively; XP via Platform SDK shim).
+          LIBS="-ld3d9 -ldwmapi -luser32 -lgdi32 -lshell32"
 
           g++ $FLAGS $DEFS $INC $SRC -o SightlinePlayer.exe $LIBS
 
