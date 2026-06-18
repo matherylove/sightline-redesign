@@ -16,7 +16,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Install MinGW-w64 i686 via MSYS2 ────────────────
+      # ── 2. Install MinGW-w64 i686 + xxd via MSYS2 ─────────
       - name: Set up MSYS2 + MinGW i686
         uses: msys2/setup-msys2@v2
         with:
@@ -26,6 +26,7 @@ jobs:
             mingw-w64-i686-gcc
             mingw-w64-i686-cmake
             mingw-w64-i686-make
+            vim
 
       # ── 3. Cache ImGui source ───────────────────────────────
       - name: Cache Dear ImGui v1.90.9
@@ -45,7 +46,27 @@ jobs:
           Expand-Archive $zip -DestinationPath .
           Rename-Item imgui-1.90.9 imgui
 
-      # ── 4. Build ────────────────────────────────────────────
+      # ── 4. Download Cousine font + generate embedded header ─
+      - name: Embed Cousine-Regular.ttf as C array
+        shell: msys2 {0}
+        run: |
+          set -e
+          TTF="imgui/misc/fonts/Cousine-Regular.ttf"
+          if [ ! -f "$TTF" ]; then
+            echo "ERROR: $TTF not found after ImGui download" && exit 1
+          fi
+          # xxd -i generates:  unsigned char name[] = { ... };
+          #                    unsigned int  name_len = NNN;
+          # We wrap it in a header with our own names.
+          echo '#pragma once' > src/font_cousine.h
+          echo '// AUTO-GENERATED — do not edit' >> src/font_cousine.h
+          xxd -i "$TTF" | \
+            sed 's/unsigned char imgui_misc_fonts_Cousine_Regular_ttf/static const unsigned char cousine_ttf_data/g' | \
+            sed 's/unsigned int imgui_misc_fonts_Cousine_Regular_ttf_len/static const unsigned int cousine_ttf_size/g' \
+            >> src/font_cousine.h
+          echo "Font header generated: $(wc -l < src/font_cousine.h) lines"
+
+      # ── 5. Build ────────────────────────────────────────────
       - name: Build SightlinePlayer.exe
         shell: msys2 {0}
         run: |
@@ -61,19 +82,16 @@ jobs:
               $IMGUI/backends/imgui_impl_win32.cpp \
               $IMGUI/backends/imgui_impl_dx9.cpp"
 
-          INC="-I$IMGUI -I$IMGUI/backends"
+          INC="-Isrc -I$IMGUI -I$IMGUI/backends"
           DEFS="-DWINVER=0x0501 -D_WIN32_WINNT=0x0501 -DWIN32_LEAN_AND_MEAN"
           FLAGS="-m32 -O2 -mwindows -static -static-libgcc -static-libstdc++"
-          # dwmapi: needed by imgui_impl_win32 for DwmIsCompositionEnabled /
-          #         DwmGetColorizationColor / DwmEnableBlurBehindWindow.
-          # dwmapi.dll ships on XP SP3+ (Vista+ natively; XP via Platform SDK shim).
           LIBS="-ld3d9 -ldwmapi -luser32 -lgdi32 -lshell32"
 
           g++ $FLAGS $DEFS $INC $SRC -o SightlinePlayer.exe $LIBS
 
           echo "Build OK — $(du -h SightlinePlayer.exe)"
 
-      # ── 5. Upload artifact ──────────────────────────────────
+      # ── 6. Upload artifact ──────────────────────────────────
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
