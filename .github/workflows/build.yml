@@ -46,26 +46,34 @@ jobs:
           Expand-Archive $zip -DestinationPath .
           Rename-Item imgui-1.90.9 imgui
 
-      # ── 4. Generate embedded font header ───────────────────
-      # xxd -i converts the TTF binary into a C array (const unsigned char[]).
-      # This bakes ProggyVector into the EXE — no external .ttf needed at runtime.
-      - name: Generate font_proggy.h from ProggyVector.ttf
+      # ── 4. Download Electrolize font and generate header ────
+      # Electrolize is licensed under the SIL Open Font License 1.1
+      # and can be freely embedded in compiled binaries.
+      # Source: https://fonts.google.com/specimen/Electrolize
+      - name: Download Electrolize-Regular.ttf
+        shell: pwsh
+        run: |
+          $url = 'https://fonts.gstatic.com/s/electrolize/v18/cIf5Ma1dtE0zesiTbQ5Hx3N3MXT3.ttf'
+          Invoke-WebRequest -Uri $url -OutFile 'Electrolize-Regular.ttf'
+          Write-Host "Downloaded: $((Get-Item 'Electrolize-Regular.ttf').Length) bytes"
+
+      - name: Generate font_electrolize.h from Electrolize-Regular.ttf
         shell: msys2 {0}
         run: |
           set -e
-          TTF="imgui/misc/fonts/ProggyVector.ttf"
-          OUT="src/font_proggy.h"
+          TTF="Electrolize-Regular.ttf"
+          OUT="src/font_electrolize.h"
           if [ -f "$TTF" ]; then
             echo "Generating $OUT from $TTF ..."
-            # xxd -i outputs: unsigned char name[] = {...}; unsigned int name_len = NNN;
+            echo '#pragma once' > "$OUT"
             xxd -i "$TTF" | sed \
-              -e 's/unsigned char imgui_misc_fonts_ProggyVector_ttf/const unsigned char proggy_vector_ttf/g' \
-              -e 's/unsigned int imgui_misc_fonts_ProggyVector_ttf_len/const unsigned int proggy_vector_ttf_len/g' \
-              > "$OUT"
+              -e 's/unsigned char [A-Za-z0-9_]*_ttf/const unsigned char electrolize_regular_ttf/g' \
+              -e 's/unsigned int [A-Za-z0-9_]*_ttf_len/const unsigned int electrolize_regular_ttf_len/g' \
+              >> "$OUT"
             echo "OK — $(wc -c < $OUT) bytes written to $OUT"
           else
-            echo "WARNING: $TTF not found — font will fall back to file/system fonts"
-            echo '// font_proggy.h — placeholder (ProggyVector.ttf not found at build time)' > "$OUT"
+            echo "ERROR: $TTF not found"
+            exit 1
           fi
 
       # ── 5. Build ────────────────────────────────────────────
