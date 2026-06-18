@@ -5,7 +5,8 @@
 //  Compiler: MinGW-w64 or MSVC (x86 / target XP)
 // ============================================================
 
-#define WIN32_LEAN_AND_MEAN
+// WIN32_LEAN_AND_MEAN is already injected by the build system via -DWIN32_LEAN_AND_MEAN
+// Do NOT redefine it here to avoid the "redefined" warning.
 #define WINVER       0x0501   // XP
 #define _WIN32_WINNT 0x0501
 #include <windows.h>
@@ -18,6 +19,7 @@
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <string>
 
 // ─── colour palette (from CSS --vars) ───────────────────────
 #define COL32(r,g,b,a) IM_COL32(r,g,b,a)
@@ -150,7 +152,14 @@ static void IconVolume(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
     dl->PathLineTo({c.x+r*.45f,c.y+hh*.5f});
     dl->PathLineTo({c.x-r*.12f,c.y+hh});
     dl->PathFillConvex(col);
-    dl->AddCircle({c.x+r*.15f,c.y},r*.55f,col,0,1.2f,3.14f*.8f);
+    // FIX: AddCircle takes 5 args max (center, radius, col, num_segments, thickness)
+    // The 6th arg (arc_min/max) does not exist in ImGui's public API.
+    // Draw a partial arc using PathArcTo instead:
+    float cx2 = c.x + r * .15f;
+    float cy2 = c.y;
+    float rc   = r * .55f;
+    dl->PathArcTo({cx2, cy2}, rc, -3.14f * .4f, 3.14f * .4f, 8);
+    dl->PathStroke(col, false, 1.2f);
 }
 static void IconFullscreen(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 {
@@ -479,7 +488,6 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
     ImGui::SetCursorScreenPos({x,cy-14.f});
     ImGui::InvisibleButton("##dis",{90.f,28.f});
     bool disHov=ImGui::IsItemHovered();
-    // flipped thumbup = dislike
     wdl->AddText({x+26.f,cy-7.f},disHov?C_ERROR:C_TEXT_MUTED,"Dislike");
     x+=96.f;
 
@@ -611,7 +619,10 @@ static void DrawSidebar(ImDrawList* dl,ImVec2 pos,float w,float viewH)
         if(iy+itemH<pos.y || iy>pos.y+viewH) continue; // cull
         // hover highlight
         ImGui::SetCursorScreenPos({pos.x,iy});
-        ImGui::InvisibleButton(("##rel"+std::to_string(i)).c_str(),{w,itemH-4.f});
+        // FIX: use snprintf instead of std::to_string for XP compat + cleaner code
+        char relId[32];
+        snprintf(relId, sizeof(relId), "##rel%d", i);
+        ImGui::InvisibleButton(relId,{w,itemH-4.f});
         if(ImGui::IsItemHovered())
             RectFill(dl,{pos.x,iy},{w,itemH-4.f},COL32(255,255,255,8));
         DrawRelatedItem(dl,{pos.x+14.f,iy+10.f},w-28.f,g_related[i],false);
