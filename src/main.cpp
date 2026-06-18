@@ -14,14 +14,27 @@
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx9.h"
 
-// Embedded Cousine font (comes with Dear ImGui in misc/fonts)
-// We embed it via the binary-to-header tool:
-//   xxd -i Cousine-Regular.ttf > cousine_font.h
-// If you don't have Cousine, DroidSans.ttf (also shipped with imgui) works.
-// The font file must be in the same directory as main.cpp at build time.
-// We use a file-load path here so the repo stays lean; if you prefer
-// embedding the bytes directly, replace the fopen block with the
-// AddFontFromMemoryTTF variant.
+// ── Font strategy ─────────────────────────────────────────────
+// We want the retro pixel-art look of Proggy Clean but with full
+// Unicode coverage (U+2014 em-dash, U+2022 bullet, etc.).
+//
+// Priority order (first match wins):
+//   1. ProggyVector.ttf  — vector variant of Proggy, ships with
+//      Dear ImGui in misc/fonts/. Retro monospace, full Latin + punct.
+//   2. Cousine-Regular.ttf — also in imgui misc/fonts/. Slightly
+//      less "retro" but still clean monospace with full Unicode.
+//   3. DroidSans.ttf     — fallback, also in imgui misc/fonts/.
+//   4. Courier New / Arial from Windows Fonts — last resort.
+//
+// We load both at 13 px and 16 px (different ImFont* slots) so that
+// Txt() / Txt16() can pass the explicit font pointer and guarantee
+// correct sizes at every call-site.
+//
+// Glyph ranges loaded:
+//   0x0020-0x00FF  Basic Latin + Latin-1
+//   0x0100-0x024F  Latin Extended A+B
+//   0x2000-0x206F  General Punctuation  ← em-dash U+2014, bullet U+2022
+//   0x20AC-0x20AC  Euro sign
 
 #include <cstdio>
 #include <cmath>
@@ -54,14 +67,18 @@ static inline ImVec4 U32toV4(ImU32 c){
                   ((c>>16)&0xFF)/255.f,((c>>24)&0xFF)/255.f);
 }
 
+// ─── glyph ranges (shared by both font sizes) ────────────────
+static const ImWchar g_glyph_ranges[] = {
+    0x0020, 0x00FF,  // Basic Latin + Latin-1 Supplement
+    0x0100, 0x024F,  // Latin Extended A+B
+    0x2000, 0x206F,  // General Punctuation (en-dash, em-dash, bullet…)
+    0x20AC, 0x20AC,  // Euro sign
+    0,
+};
+
 // ─── font handles ────────────────────────────────────────────
-// g_font13 : default UI font at 13px (matches HTML font-size:13px)
-// g_font16 : title font at 16px (used for video title heading)
-// Both loaded from the same TTF with full Latin+Extended glyph ranges
-// so that UTF-8 sequences like \xe2\x80\x94 (U+2014 em dash) and
-// \xe2\x80\xa2 (U+2022 bullet) render correctly instead of as '?'.
-static ImFont* g_font13 = nullptr;
-static ImFont* g_font16 = nullptr;
+static ImFont* g_font13 = nullptr;  // retro monospace @ 13 px
+static ImFont* g_font16 = nullptr;  // retro monospace @ 16 px (title)
 
 // ─── app state ───────────────────────────────────────────────
 static float  g_seek       = 0.175f;
@@ -78,7 +95,6 @@ static const int   g_qualityCount  = 4;
 
 struct RelItem { const char* title; const char* channel; const char* views; const char* dur; ImU32 grad; };
 static const RelItem g_related[] = {
-    // em dash encoded as UTF-8: \xe2\x80\x94
     {"Rick Astley \xe2\x80\x94 Never Gonna Give You Up (Official Video) 4K Remaster","Rick Astley","1.7B views","3:33",COL32(0x13,0x19,0x20,255)},
     {"Best of 80s Music Legends \xe2\x80\x94 Team Formidable Mix","Radio 80s Hits","2.1M views","42:18",COL32(0x1a,0x20,0x30,255)},
     {"Rick Astley \xe2\x80\x94 Mix de Exitos Completo","Nanojams300","890K views","31:08",COL32(0x1a,0x28,0x20,255)},
@@ -148,30 +164,35 @@ static void RectFill(ImDrawList* dl,ImVec2 p,ImVec2 sz,ImU32 c,float r=0.f)
 static void Rect(ImDrawList* dl,ImVec2 p,ImVec2 sz,ImU32 c,float r=0.f,float t=1.f)
 { dl->AddRect(p,{p.x+sz.x,p.y+sz.y},c,r,0,t); }
 
-// Txt: always uses g_font13 explicitly so size is guaranteed
+// Txt: always passes g_font13 explicitly — size is guaranteed regardless of io.FontDefault
 static void Txt(ImDrawList* dl,ImVec2 p,ImU32 c,const char* s,float wrap=0.f)
 {
+    if(!g_font13) return;
     if(wrap>0.f) dl->AddText(g_font13,13.f,p,c,s,NULL,wrap);
     else         dl->AddText(g_font13,13.f,p,c,s);
 }
 // Txt16: uses g_font16 for the video title heading
 static void Txt16(ImDrawList* dl,ImVec2 p,ImU32 c,const char* s,float wrap=0.f)
 {
-    ImFont* f = g_font16 ? g_font16 : g_font13;
-    float   sz = g_font16 ? 16.f : 13.f;
+    ImFont* f  = (g_font16 && g_font16 != g_font13) ? g_font16 : g_font13;
+    float   sz = (g_font16 && g_font16 != g_font13) ? 16.f : 13.f;
+    if(!f) return;
     if(wrap>0.f) dl->AddText(f,sz,p,c,s,NULL,wrap);
     else         dl->AddText(f,sz,p,c,s);
 }
-static ImVec2 TS(const char* s)
+
+// TS / TS16: measure text using the exact same font/size used in Txt/Txt16
+static ImVec2 TS(const char* s, float wrap=0.f)
 {
-    if(g_font13) return g_font13->CalcTextSizeA(13.f,FLT_MAX,0.f,s);
-    return ImGui::CalcTextSize(s);
+    if(!g_font13) return ImGui::CalcTextSize(s);
+    return g_font13->CalcTextSizeA(13.f, FLT_MAX, wrap, s);
 }
-static ImVec2 TS16(const char* s)
+static ImVec2 TS16(const char* s, float wrap=0.f)
 {
-    ImFont* f  = g_font16 ? g_font16 : g_font13;
-    float   sz = g_font16 ? 16.f : 13.f;
-    return f->CalcTextSizeA(sz,FLT_MAX,0.f,s);
+    ImFont* f  = (g_font16 && g_font16 != g_font13) ? g_font16 : g_font13;
+    float   sz = (g_font16 && g_font16 != g_font13) ? 16.f : 13.f;
+    if(!f) return ImGui::CalcTextSize(s);
+    return f->CalcTextSizeA(sz, FLT_MAX, wrap, s);
 }
 
 // ─── icon drawing ────────────────────────────────────────────
@@ -386,18 +407,20 @@ static bool TabBtn(ImDrawList* dl,const char* label,ImVec2 pos,bool active)
 }
 
 // ─── now-playing card ────────────────────────────────────────
+// All vertical advancement is measured via TS() so no magic numbers
 static void DrawNowPlayingCard(ImDrawList* dl, ImVec2 pos, float w)
 {
-    float cardH = 68.f;
+    const float cardH  = 68.f;
+    const float padL   = 5.f + 3.f;  // left accent bar = 3px
+    const float padR   = 8.f;
+    const float padT   = 8.f;
+    const float thumbW = 80.f;
+    const float thumbH = 45.f;
+
     dl->AddRectFilled(pos, {pos.x+w, pos.y+cardH}, COL32(78,168,168,20));
     dl->AddRectFilled(pos, {pos.x+3.f, pos.y+cardH}, C_ACCENT);
     dl->AddLine({pos.x, pos.y+cardH}, {pos.x+w, pos.y+cardH}, COL32(78,168,168,46), 1.f);
 
-    float padL = 5.f + 3.f;
-    float padR = 8.f;
-    float padT = 8.f;
-
-    float thumbW = 80.f, thumbH = 45.f;
     float tx = pos.x + padL;
     float ty = pos.y + padT;
 
@@ -407,16 +430,20 @@ static void DrawNowPlayingCard(ImDrawList* dl, ImVec2 pos, float w)
     dl->AddCircleFilled(cc, 11.f, COL32(0,0,0,120));
     IconPlay(dl, cc, 6.f, C_ACCENT);
 
-    float ix = tx + thumbW + 8.f;
-    float iw = w - padL - thumbW - 8.f - padR;
-    float iy = pos.y + padT;
+    float ix  = tx + thumbW + 8.f;
+    float iw  = w - padL - thumbW - 8.f - padR;
+    float iy  = pos.y + padT;
 
+    // "NOW PLAYING" badge
     const char* badge = "NOW PLAYING";
+    ImVec2 bsz = TS(badge);
     Txt(dl,{ix, iy},C_ACCENT,badge);
-    iy += 13.f;
+    iy += bsz.y + 2.f;
 
+    // title (clipped to available width, single line via no-wrap but clip)
     Txt(dl,{ix, iy},C_TEXT,g_related[0].title,iw);
-    iy += 26.f;
+    ImVec2 tsz = TS(g_related[0].title, iw);
+    iy += tsz.y + 4.f;
 
     Txt(dl,{ix, iy},C_TEXT_FAINT,g_related[0].channel);
 }
@@ -424,9 +451,9 @@ static void DrawNowPlayingCard(ImDrawList* dl, ImVec2 pos, float w)
 // ─── related item ────────────────────────────────────────────
 static void DrawRelatedItem(ImDrawList* dl, ImVec2 pos, float w, const RelItem& item, int /*idx*/)
 {
-    float thumbW = 100.f, thumbH = 56.f;
-    float padT = 8.f, padL = 8.f, padR = 8.f;
-    float itemH = thumbH + padT * 2.f;
+    const float thumbW = 100.f, thumbH = 56.f;
+    const float padT = 8.f, padL = 8.f, padR = 8.f;
+    const float itemH = thumbH + padT * 2.f;
 
     float tx = pos.x + padL;
     float ty = pos.y + padT;
@@ -443,9 +470,16 @@ static void DrawRelatedItem(ImDrawList* dl, ImVec2 pos, float w, const RelItem& 
     float iy = pos.y + padT;
 
     Txt(dl,{ix, iy},C_TEXT,item.title,iw);
-    iy += 28.f;
+    ImVec2 titSz = TS(item.title, iw);
+    // Clamp to two lines max to stay inside itemH
+    float titleH = titSz.y;
+    float maxTitleH = 13.f * 2.f + 4.f;  // ~2 lines of 13px text
+    if(titleH > maxTitleH) titleH = maxTitleH;
+    iy += titleH + 4.f;
+
     Txt(dl,{ix, iy},C_TEXT_MUTED,item.channel);
-    iy += 15.f;
+    ImVec2 chSz = TS(item.channel);
+    iy += chSz.y + 2.f;
     Txt(dl,{ix, iy},C_TEXT_FAINT,item.views);
 
     dl->AddLine({pos.x+padL, pos.y+itemH-1.f}, {pos.x+w-padR, pos.y+itemH-1.f}, C_BORDER, 1.f);
@@ -470,8 +504,7 @@ static void DrawTitlebar(ImDrawList* dl, ImVec2 pos, float w)
     // "SIGHT" white + "LINE" teal
     const char* part1 = "SIGHT";
     const char* part2 = "LINE";
-    float fontH = 13.f;
-    float fontY = cy - fontH * .5f;
+    float fontY = cy - TS(part1).y * .5f;
     ImVec2 s1 = TS(part1);
     Txt(dl,{x, fontY},C_TEXT,part1);
     Txt(dl,{x + s1.x, fontY},C_ACCENT,part2);
@@ -579,6 +612,7 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
         int curSec=(int)(g_seek*totalSec);
         char cur[16]; snprintf(cur, sizeof(cur), "%d:%02d", curSec/60, curSec%60);
         const char* tot="10:00";
+        ImVec2 timeSz = TS(cur);
         Txt(dl,{pos.x+4.f, pos.y+18.f},C_TEXT_FAINT,cur);
         ImVec2 ts2 = TS(tot);
         Txt(dl,{pos.x+w-ts2.x-4.f, pos.y+18.f},C_TEXT_FAINT,tot);
@@ -742,9 +776,7 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         x+=pillW+4.f;
     }
 
-    // Right: meta — use bullet U+2022 as ASCII middot to avoid font issues
-    // The UTF-8 bytes for U+2022 (BULLET) are \xe2\x80\xa2
-    // They will now render correctly with the Cousine font + full glyph ranges.
+    // Right: meta
     const char* meta="1.7B views  \xe2\x80\xa2  Jul 28, 1987";
     ImVec2 ms=TS(meta);
     Txt(wdl,{pos.x+w-ms.x-12.f,cy-ms.y*.5f},C_TEXT_FAINT,meta);
@@ -756,19 +788,17 @@ static void DrawInfoZone(ImDrawList* dl,ImVec2 pos,float w,float& contentH)
     float x=pos.x+12.f, y=pos.y+10.f;
     float iw=w-24.f;
 
-    // Title at 16px — use dedicated g_font16 + Txt16
+    // Title at 16px
     const char* title="Rick Astley \xe2\x80\x94 Never Gonna Give You Up (Official Video) 4K Remaster";
-    ImVec2 titleSz = (g_font16 ? g_font16 : g_font13)->CalcTextSizeA(
-        g_font16 ? 16.f : 13.f, FLT_MAX, iw, title);
+    ImVec2 titleSz = TS16(title, iw);
     Txt16(dl,{x,y},C_TEXT,title,iw);
-    // Advance by measured height + a small gap (matches HTML line-height ~1.4)
     y += titleSz.y + 8.f;
 
-    // Meta row (13px, text-faint)
-    // U+2022 bullet: \xe2\x80\xa2  |  U+2014 em dash: \xe2\x80\x94
+    // Meta row
     const char* meta2="1,782,034,159 views  \xe2\x80\xa2  Jul 28, 1987  \xe2\x80\xa2  #RickAstley #80s";
+    ImVec2 metaSz = TS(meta2);
     Txt(dl,{x,y},C_TEXT_FAINT,meta2);
-    y+=18.f;
+    y += metaSz.y + 6.f;
 
     dl->AddLine({pos.x,y+4.f},{pos.x+w,y+4.f},C_DIVIDER,1.f); y+=12.f;
 
@@ -818,10 +848,7 @@ static void DrawInfoZone(ImDrawList* dl,ImVec2 pos,float w,float& contentH)
             "Billboard Hot 100. It also won the Brit Award for Best single in 1988.\n\n"
             "Stock Aitken and Waterman wrote and produced the track which was the\n"
             "lead-off single from Rick's debut LP 'Whenever You Need Somebody'.";
-        // Measure with g_font13 at wrap width so dbH is accurate
-        ImVec2 dsz = g_font13
-            ? g_font13->CalcTextSizeA(13.f, FLT_MAX, dbW-24.f, desc)
-            : ImGui::CalcTextSize(desc, NULL, false, dbW-24.f);
+        ImVec2 dsz = TS(desc, dbW-24.f);
         float dbH = dsz.y + 24.f;
         dl->AddRectFilled({x,dbY},{x+dbW,dbY+dbH},C_SURFACE2,8.f);
         dl->AddRect({x,dbY},{x+dbW,dbY+dbH},C_BORDER,8.f,0,1.f);
@@ -842,7 +869,10 @@ static void DrawSidebar(ImDrawList* dl, ImVec2 pos, float w, float viewH)
     RectFill(dl, {pos.x, y}, {w, 40.f}, C_SURFACE);
     dl->AddLine({pos.x, y+40.f}, {pos.x+w, y+40.f}, C_BORDER, 1.f);
 
-    Txt(dl,{pos.x+12.f, y+14.f},C_TEXT_FAINT,"UP NEXT");
+    const char* upnext = "UP NEXT";
+    ImVec2 unsz = TS(upnext);
+    float barCY = y + 20.f;
+    Txt(dl,{pos.x+12.f, barCY - unsz.y*.5f},C_TEXT_FAINT,upnext);
 
     const char* autoTxt = "Autoplay";
     ImVec2 ats = TS(autoTxt);
@@ -852,7 +882,8 @@ static void DrawSidebar(ImDrawList* dl, ImVec2 pos, float w, float viewH)
     Txt(dl,{togX - ats.x - 6.f, togY},C_TEXT_MUTED,autoTxt);
     dl->AddRectFilled({togX, togY}, {togX+togW, togY+togH}, C_ACCENT, togH*.5f);
     dl->AddCircleFilled({togX+togW-togH*.5f-1.f, togY+togH*.5f}, togH*.5f-2.f, C_WHITE);
-    Txt(dl,{togX+4.f, togY+2.f},C_BLACK,"ON");
+    ImVec2 onSz = TS("ON");
+    Txt(dl,{togX+4.f, togY+(togH-onSz.y)*.5f},C_BLACK,"ON");
     y += 40.f;
 
     float npH = 68.f;
@@ -891,8 +922,7 @@ static void DrawStatusBar(ImDrawList* dl,ImVec2 pos,float w)
     RectFill(dl,pos,{w,h},C_SURFACE);
     dl->AddLine(pos,{pos.x+w,pos.y},C_DIVIDER,1.f);
     float cy=pos.y+h*.5f;
-    // Vertical center for 13px font in this bar
-    float ty=cy-6.5f;
+    float ty=cy - TS("X").y * .5f;  // vertically centre using real font height
 
     ImU32 dotc= g_playing? C_SUCCESS : COL32(0xC9,0xA9,0x6B,255);
     dl->AddCircleFilled({pos.x+10.f,cy},3.5f,dotc);
@@ -901,12 +931,10 @@ static void DrawStatusBar(ImDrawList* dl,ImVec2 pos,float w)
     const char* stateLabel= g_playing? "Playing":"Paused";
     Txt(dl,{pos.x+20.f,ty},C_TEXT_MUTED,stateLabel);
 
-    // Center title — use TS() which now uses g_font13 so width is accurate
     const char* titleStatus="Rick Astley \xe2\x80\x94 Never Gonna Give You Up (Official Video) 4K Remaster";
     ImVec2 ts2=TS(titleStatus);
     Txt(dl,{pos.x+w*.5f-ts2.x*.5f,ty},C_TEXT_MUTED,titleStatus);
 
-    // Right: codec string — U+2022 bullet
     const char* codec="2160p  \xe2\x80\xa2  0:33 / 3:13";
     ImVec2 cs=TS(codec);
     Txt(dl,{pos.x+w-cs.x-10.f,ty},C_TEXT_FAINT,codec);
@@ -996,74 +1024,56 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int nCmdShow)
     io.IniFilename=NULL;
 
     // ── Font loading ──────────────────────────────────────────
-    // We need a font with full Latin + Latin Extended glyph support
-    // so that UTF-8 sequences like U+2014 (em dash) and U+2022 (bullet)
-    // render as the correct glyphs instead of '?'.
+    // Goal: retro monospace feel (like Proggy Clean) + full Unicode.
     //
-    // Strategy (XP-compatible, no external DLLs):
-    //   1. Try to load Cousine-Regular.ttf next to the exe
-    //      (shipped in Dear ImGui misc/fonts/)
-    //   2. Fall back to DroidSans.ttf (also in imgui misc/fonts/)
-    //   3. Fall back to AddFontDefault() which only has ASCII —
-    //      in this case glyphs still show '?' but the app won't crash.
+    // ProggyVector.ttf  — vector version of Proggy, ships in imgui/misc/fonts/
+    //                     Retro bitmap-style look, scales cleanly, supports
+    //                     all Latin + General Punctuation glyphs we need.
+    // Cousine-Regular   — also in imgui/misc/fonts/, good fallback.
+    // DroidSans         — also in imgui/misc/fonts/.
+    // Windows fonts     — last resort (Courier New present since XP).
     //
-    // Glyph ranges: Default (ASCII 0x20-0xFF) +
-    //               Latin Extended-A (0x0100-0x017F) +
-    //               Latin Extended-B (0x0180-0x024F) +
-    //               General Punctuation (0x2000-0x206F) covers em-dash / bullet
-    static const ImWchar glyph_ranges[] = {
-        0x0020, 0x00FF,  // Basic Latin + Latin-1 Supplement
-        0x0100, 0x024F,  // Latin Extended A+B
-        0x2000, 0x206F,  // General Punctuation (en-dash, em-dash, bullet, etc.)
-        0x20AC, 0x20AC,  // Euro sign
-        0,
-    };
+    // We load 13 px and 16 px into separate ImFont* slots so that
+    // Txt() / Txt16() can pass the pointer explicitly and guarantee
+    // correct sizes regardless of what io.FontDefault points to.
 
-    ImFontConfig cfg13;
-    cfg13.SizePixels = 13.f;
-    cfg13.GlyphRanges = glyph_ranges;
-
-    ImFontConfig cfg16;
-    cfg16.SizePixels = 16.f;
-    cfg16.GlyphRanges = glyph_ranges;
-
-    // Probe font paths: next to exe, then current dir, then Windows fonts
     const char* font_candidates[] = {
+        // Preferred: ProggyVector (retro + unicode)
+        "ProggyVector.ttf",
+        "fonts/ProggyVector.ttf",
+        // Good fallback: Cousine (also in imgui misc/fonts)
         "Cousine-Regular.ttf",
         "DroidSans.ttf",
         "fonts/Cousine-Regular.ttf",
         "fonts/DroidSans.ttf",
-        // Windows ships these monospace fonts; any one of them covers
-        // the General Punctuation block we need.
-        "C:\\Windows\\Fonts\\cour.ttf",   // Courier New
-        "C:\\Windows\\Fonts\\consola.ttf", // Consolas (Vista+, not XP)
-        "C:\\Windows\\Fonts\\arial.ttf",   // Arial — broad Unicode coverage
+        // Windows fallbacks (XP+)
+        "C:\\Windows\\Fonts\\cour.ttf",    // Courier New — present since XP
+        "C:\\Windows\\Fonts\\consola.ttf", // Consolas — Vista+
+        "C:\\Windows\\Fonts\\arial.ttf",   // Arial — broad coverage
         NULL
     };
 
     for(int fi = 0; font_candidates[fi] != NULL; fi++){
-        // Check if file exists before asking ImGui to load it
         FILE* f = fopen(font_candidates[fi], "rb");
         if(!f) continue;
         fclose(f);
 
-        // Load 13px variant
-        ImFontConfig c13 = cfg13;
-        g_font13 = io.Fonts->AddFontFromFileTTF(font_candidates[fi], 13.f, &c13, glyph_ranges);
+        ImFontConfig c13;
+        c13.GlyphRanges = g_glyph_ranges;
+        g_font13 = io.Fonts->AddFontFromFileTTF(font_candidates[fi], 13.f, &c13, g_glyph_ranges);
 
-        // Load 16px variant from same file
-        ImFontConfig c16 = cfg16;
+        ImFontConfig c16;
+        c16.GlyphRanges = g_glyph_ranges;
         c16.MergeMode = false;
-        g_font16 = io.Fonts->AddFontFromFileTTF(font_candidates[fi], 16.f, &c16, glyph_ranges);
+        g_font16 = io.Fonts->AddFontFromFileTTF(font_candidates[fi], 16.f, &c16, g_glyph_ranges);
 
         break;
     }
 
-    // If no TTF was found, fall back to the built-in Proggy Clean (ASCII only)
-    // The '?' glyphs will reappear for em-dash/bullet but the app will still run.
+    // Hard fallback: built-in Proggy Clean (ASCII only — '?' for em-dash/bullet)
     if(!g_font13){
         g_font13 = io.Fonts->AddFontDefault();
-        g_font16 = g_font13; // same atlas slot, 13px — title will look a bit small
+        g_font16 = g_font13;
     }
 
     io.FontDefault = g_font13;
