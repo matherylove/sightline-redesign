@@ -14,6 +14,15 @@
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx9.h"
 
+// Embedded Cousine font (comes with Dear ImGui in misc/fonts)
+// We embed it via the binary-to-header tool:
+//   xxd -i Cousine-Regular.ttf > cousine_font.h
+// If you don't have Cousine, DroidSans.ttf (also shipped with imgui) works.
+// The font file must be in the same directory as main.cpp at build time.
+// We use a file-load path here so the repo stays lean; if you prefer
+// embedding the bytes directly, replace the fopen block with the
+// AddFontFromMemoryTTF variant.
+
 #include <cstdio>
 #include <cmath>
 #include <cstring>
@@ -45,6 +54,15 @@ static inline ImVec4 U32toV4(ImU32 c){
                   ((c>>16)&0xFF)/255.f,((c>>24)&0xFF)/255.f);
 }
 
+// ─── font handles ────────────────────────────────────────────
+// g_font13 : default UI font at 13px (matches HTML font-size:13px)
+// g_font16 : title font at 16px (used for video title heading)
+// Both loaded from the same TTF with full Latin+Extended glyph ranges
+// so that UTF-8 sequences like \xe2\x80\x94 (U+2014 em dash) and
+// \xe2\x80\xa2 (U+2022 bullet) render correctly instead of as '?'.
+static ImFont* g_font13 = nullptr;
+static ImFont* g_font16 = nullptr;
+
 // ─── app state ───────────────────────────────────────────────
 static float  g_seek       = 0.175f;
 static float  g_vol        = 0.80f;
@@ -60,6 +78,7 @@ static const int   g_qualityCount  = 4;
 
 struct RelItem { const char* title; const char* channel; const char* views; const char* dur; ImU32 grad; };
 static const RelItem g_related[] = {
+    // em dash encoded as UTF-8: \xe2\x80\x94
     {"Rick Astley \xe2\x80\x94 Never Gonna Give You Up (Official Video) 4K Remaster","Rick Astley","1.7B views","3:33",COL32(0x13,0x19,0x20,255)},
     {"Best of 80s Music Legends \xe2\x80\x94 Team Formidable Mix","Radio 80s Hits","2.1M views","42:18",COL32(0x1a,0x20,0x30,255)},
     {"Rick Astley \xe2\x80\x94 Mix de Exitos Completo","Nanojams300","890K views","31:08",COL32(0x1a,0x28,0x20,255)},
@@ -128,9 +147,32 @@ static void RectFill(ImDrawList* dl,ImVec2 p,ImVec2 sz,ImU32 c,float r=0.f)
 { dl->AddRectFilled(p,{p.x+sz.x,p.y+sz.y},c,r); }
 static void Rect(ImDrawList* dl,ImVec2 p,ImVec2 sz,ImU32 c,float r=0.f,float t=1.f)
 { dl->AddRect(p,{p.x+sz.x,p.y+sz.y},c,r,0,t); }
+
+// Txt: always uses g_font13 explicitly so size is guaranteed
 static void Txt(ImDrawList* dl,ImVec2 p,ImU32 c,const char* s,float wrap=0.f)
-{ if(wrap>0.f) dl->AddText(NULL,0.f,p,c,s,NULL,wrap); else dl->AddText(p,c,s); }
-static ImVec2 TS(const char* s){ return ImGui::CalcTextSize(s); }
+{
+    if(wrap>0.f) dl->AddText(g_font13,13.f,p,c,s,NULL,wrap);
+    else         dl->AddText(g_font13,13.f,p,c,s);
+}
+// Txt16: uses g_font16 for the video title heading
+static void Txt16(ImDrawList* dl,ImVec2 p,ImU32 c,const char* s,float wrap=0.f)
+{
+    ImFont* f = g_font16 ? g_font16 : g_font13;
+    float   sz = g_font16 ? 16.f : 13.f;
+    if(wrap>0.f) dl->AddText(f,sz,p,c,s,NULL,wrap);
+    else         dl->AddText(f,sz,p,c,s);
+}
+static ImVec2 TS(const char* s)
+{
+    if(g_font13) return g_font13->CalcTextSizeA(13.f,FLT_MAX,0.f,s);
+    return ImGui::CalcTextSize(s);
+}
+static ImVec2 TS16(const char* s)
+{
+    ImFont* f  = g_font16 ? g_font16 : g_font13;
+    float   sz = g_font16 ? 16.f : 13.f;
+    return f->CalcTextSizeA(sz,FLT_MAX,0.f,s);
+}
 
 // ─── icon drawing ────────────────────────────────────────────
 static void IconPlay(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
@@ -169,7 +211,6 @@ static void IconFullscreen(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 }
 static void IconShare(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 {
-    // 3 circles + 2 lines (share icon)
     dl->AddCircle({c.x+r*.6f,c.y-r*.55f},r*.22f,col,0,1.3f);
     dl->AddCircle({c.x+r*.6f,c.y+r*.55f},r*.22f,col,0,1.3f);
     dl->AddCircle({c.x-r*.6f,c.y},r*.22f,col,0,1.3f);
@@ -210,30 +251,15 @@ static void IconThumbDown(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
     dl->AddRectFilled({c.x-hw,c.y-hh},{c.x-hw+r*.22f,c.y-hh*.1f},col,1.f);
 }
 
-// ─── Logo exacto del HTML SVG ────────────────────────────────
-// SVG: viewBox 0 0 22 22, cx=cy=11
-//   circle r9 stroke #4EA8A8 stroke-width 1.5
-//   circle r5 stroke #4EA8A8 stroke-width 1 stroke-dasharray "2 2"
-//   circle r2 fill #4EA8A8
-//   4 lines: top (11,2)-(11,4), bottom (11,18)-(11,20),
-//             left (2,11)-(4,11), right (18,11)-(20,11)
-//   stroke-linecap round
+// ─── Logo exacto del HTML SVG ─────────────────────────────────
 static void DrawLogo(ImDrawList* dl, ImVec2 center, float scale, ImU32 col)
 {
-    // scale maps SVG 11px radius -> pixels
-    // SVG total size 22x22, center at (11,11), outer circle r=9
-    // We pass scale = desired_radius_of_outer_circle
-    float s = scale / 9.f; // 1 SVG unit = s pixels
-
-    // outer circle r=9, stroke-width 1.5
+    float s = scale / 9.f;
     dl->AddCircle(center, 9.f*s, col, 0, 1.5f);
-
-    // inner dashed circle r=5, stroke-width 1, dasharray 2 2
-    // Approximate dashes as arc segments
     {
         float r5 = 5.f*s;
-        int   num_dashes = 8; // 8 dashes around the circle
-        float dash_angle = 3.14159f * 2.f / (float)(num_dashes * 2); // dash + gap
+        int   num_dashes = 8;
+        float dash_angle = 3.14159f * 2.f / (float)(num_dashes * 2);
         for(int i = 0; i < num_dashes; i++){
             float a0 = (float)i * 2.f * dash_angle;
             float a1 = a0 + dash_angle * 0.85f;
@@ -241,19 +267,11 @@ static void DrawLogo(ImDrawList* dl, ImVec2 center, float scale, ImU32 col)
             dl->PathStroke(col, false, 1.0f);
         }
     }
-
-    // center dot r=2, fill
     dl->AddCircleFilled(center, 2.f*s, col);
-
-    // 4 tick lines (stroke-linecap round, stroke-width 1.5)
     float lw = 1.5f;
-    // top: (11,2) -> (11,4) in SVG = offset from center: (0,-9) -> (0,-7)
     dl->AddLine({center.x, center.y - 9.f*s}, {center.x, center.y - 7.f*s}, col, lw);
-    // bottom: (11,18) -> (11,20) = (0,+7) -> (0,+9)
     dl->AddLine({center.x, center.y + 7.f*s}, {center.x, center.y + 9.f*s}, col, lw);
-    // left: (2,11) -> (4,11) = (-9,0) -> (-7,0)
     dl->AddLine({center.x - 9.f*s, center.y}, {center.x - 7.f*s, center.y}, col, lw);
-    // right: (18,11) -> (20,11) = (+7,0) -> (+9,0)
     dl->AddLine({center.x + 7.f*s, center.y}, {center.x + 9.f*s, center.y}, col, lw);
 }
 
@@ -274,8 +292,8 @@ static void IconSkip(ImDrawList* dl,ImVec2 c,float r,ImU32 col,bool forward)
     ImVec2 p2  = {ax + as2*cosf(ang - 3.14f*0.7f), ay + as2*sinf(ang - 3.14f*0.7f)};
     dl->AddTriangleFilled(tip,p1,p2,col);
     const char* num = "10";
-    ImVec2 ns = ImGui::CalcTextSize(num);
-    dl->AddText({c.x - ns.x*.5f, c.y - ns.y*.5f}, col, num);
+    ImVec2 ns = TS(num);
+    dl->AddText(g_font13,13.f,{c.x - ns.x*.5f, c.y - ns.y*.5f}, col, num);
 }
 
 // ─── seekbar / volbar ─────────────────────────────────────────
@@ -344,7 +362,7 @@ static bool IconBtn(const char* id,ImVec2 pos,float size)
     return ImGui::IsItemClicked();
 }
 
-// Tab button — matches HTML .tab-btn / .tab-btn.active
+// Tab button
 static bool TabBtn(ImDrawList* dl,const char* label,ImVec2 pos,bool active)
 {
     ImVec2 ts=TS(label);
@@ -354,41 +372,28 @@ static bool TabBtn(ImDrawList* dl,const char* label,ImVec2 pos,bool active)
     ImGui::InvisibleButton(label,{w,h});
     bool hov=ImGui::IsItemHovered();
     if(active){
-        // HTML .tab-btn.active: background accent, color #fff, border accent
         dl->AddRectFilled(pos,{pos.x+w,pos.y+h},C_ACCENT,5.f);
         dl->AddRect(pos,{pos.x+w,pos.y+h},C_ACCENT,5.f,0,1.f);
-        dl->AddText({pos.x+padX,pos.y+(h-ts.y)*.5f},C_WHITE,label);
+        Txt(dl,{pos.x+padX,pos.y+(h-ts.y)*.5f},C_WHITE,label);
     } else {
         ImU32 bg= hov ? C_SURFACE3 : C_SURFACE2;
         dl->AddRectFilled(pos,{pos.x+w,pos.y+h},bg,5.f);
         dl->AddRect(pos,{pos.x+w,pos.y+h},C_BORDER,5.f,0,1.f);
         ImU32 tc= hov ? C_TEXT : C_TEXT_MUTED;
-        dl->AddText({pos.x+padX,pos.y+(h-ts.y)*.5f},tc,label);
+        Txt(dl,{pos.x+padX,pos.y+(h-ts.y)*.5f},tc,label);
     }
     return ImGui::IsItemClicked();
 }
 
-// ─── sidebar related item ────────────────────────────────────
-// HTML .now-playing-card: thumb 80x45, np-info rows stacked
-// HTML .related-item:     thumb 100x56, rel-info rows stacked
-// Row heights (13px font, lineHeight ~1.4 = ~18px per row):
-//   now-playing:  badge(13) + title(~26 wrapped) + channel(13) = ~52px content, card pad sp2=8 top+bot -> ~68px
-//   related-item: title(~26 wrapped) + channel(13) + views(13) = ~52px content, pad sp2=8 -> ~68px
+// ─── now-playing card ────────────────────────────────────────
 static void DrawNowPlayingCard(ImDrawList* dl, ImVec2 pos, float w)
 {
-    // HTML .now-playing-card:
-    //   background rgba(78,168,168,0.08)
-    //   border-left 3px solid accent
-    //   border-bottom 1px solid rgba(78,168,168,0.18)
-    //   padding sp2=8 all sides, padding-left = sp2-3 = 5
     float cardH = 68.f;
     dl->AddRectFilled(pos, {pos.x+w, pos.y+cardH}, COL32(78,168,168,20));
-    // left border 3px accent
     dl->AddRectFilled(pos, {pos.x+3.f, pos.y+cardH}, C_ACCENT);
-    // bottom border accent-line
     dl->AddLine({pos.x, pos.y+cardH}, {pos.x+w, pos.y+cardH}, COL32(78,168,168,46), 1.f);
 
-    float padL = 5.f + 3.f; // padding-left after the 3px border
+    float padL = 5.f + 3.f;
     float padR = 8.f;
     float padT = 8.f;
 
@@ -396,77 +401,57 @@ static void DrawNowPlayingCard(ImDrawList* dl, ImVec2 pos, float w)
     float tx = pos.x + padL;
     float ty = pos.y + padT;
 
-    // thumbnail
     dl->AddRectFilled({tx, ty}, {tx+thumbW, ty+thumbH}, g_related[0].grad, 3.f);
     dl->AddRectFilled({tx, ty}, {tx+thumbW, ty+thumbH}, COL32(78,168,168,25), 3.f);
-    // play icon overlay
     ImVec2 cc = {tx+thumbW*.5f, ty+thumbH*.5f};
     dl->AddCircleFilled(cc, 11.f, COL32(0,0,0,120));
     IconPlay(dl, cc, 6.f, C_ACCENT);
 
-    // info column
     float ix = tx + thumbW + 8.f;
     float iw = w - padL - thumbW - 8.f - padR;
     float iy = pos.y + padT;
 
-    // "NOW PLAYING" badge (font-size 9px, uppercase, letter-spacing 0.12em)
     const char* badge = "NOW PLAYING";
-    dl->AddText({ix, iy}, C_ACCENT, badge);
+    Txt(dl,{ix, iy},C_ACCENT,badge);
     iy += 13.f;
 
-    // title (font-size 11px, 2-line clamp)
-    const char* title = g_related[0].title;
-    dl->AddText(NULL, 0.f, {ix, iy}, C_TEXT, title, NULL, iw);
+    Txt(dl,{ix, iy},C_TEXT,g_related[0].title,iw);
     iy += 26.f;
 
-    // channel (font-size 10px, color faint)
-    dl->AddText({ix, iy}, C_TEXT_FAINT, g_related[0].channel);
+    Txt(dl,{ix, iy},C_TEXT_FAINT,g_related[0].channel);
 }
 
-static void DrawRelatedItem(ImDrawList* dl, ImVec2 pos, float w, const RelItem& item, int idx)
+// ─── related item ────────────────────────────────────────────
+static void DrawRelatedItem(ImDrawList* dl, ImVec2 pos, float w, const RelItem& item, int /*idx*/)
 {
-    // HTML .related-item: padding sp2=8, gap sp2=8, border-bottom 1px solid border
-    // thumb: 100x56
     float thumbW = 100.f, thumbH = 56.f;
     float padT = 8.f, padL = 8.f, padR = 8.f;
-    float itemH = thumbH + padT * 2.f;  // 56 + 16 = 72
+    float itemH = thumbH + padT * 2.f;
 
     float tx = pos.x + padL;
     float ty = pos.y + padT;
 
-    // thumbnail background
     dl->AddRectFilled({tx, ty}, {tx+thumbW, ty+thumbH}, item.grad, 3.f);
-    // film icon placeholder (subtle)
-    ImVec2 ic = {tx+thumbW*.5f, ty+thumbH*.5f};
-    // duration badge bottom-right
     ImVec2 ds = TS(item.dur);
     float bx = tx + thumbW - ds.x - 7.f;
     float by2 = ty + thumbH - 14.f;
     dl->AddRectFilled({bx-3.f, by2}, {tx+thumbW-3.f, by2+12.f}, COL32(0,0,0,200), 2.f);
-    dl->AddText({bx, by2+1.f}, C_TEXT, item.dur);
+    Txt(dl,{bx, by2+1.f},C_TEXT,item.dur);
 
-    // info column
     float ix = tx + thumbW + 8.f;
     float iw = w - padL - thumbW - 8.f - padR;
     float iy = pos.y + padT;
 
-    // title (font-size 12px, 2-line clamp ~28px)
-    dl->AddText(NULL, 0.f, {ix, iy}, C_TEXT, item.title, NULL, iw);
+    Txt(dl,{ix, iy},C_TEXT,item.title,iw);
     iy += 28.f;
-
-    // channel (font-size 11px, text-muted)
-    dl->AddText({ix, iy}, C_TEXT_MUTED, item.channel);
+    Txt(dl,{ix, iy},C_TEXT_MUTED,item.channel);
     iy += 15.f;
+    Txt(dl,{ix, iy},C_TEXT_FAINT,item.views);
 
-    // views (font-size 10px, text-faint)
-    dl->AddText({ix, iy}, C_TEXT_FAINT, item.views);
-
-    // divider
     dl->AddLine({pos.x+padL, pos.y+itemH-1.f}, {pos.x+w-padR, pos.y+itemH-1.f}, C_BORDER, 1.f);
 }
 
 // ─── titlebar ────────────────────────────────────────────────
-// HTML layout: [logo+nav | flex-1 centered title | right: search+settings]
 static void DrawTitlebar(ImDrawList* dl, ImVec2 pos, float w)
 {
     float h = 38.f;
@@ -476,26 +461,23 @@ static void DrawTitlebar(ImDrawList* dl, ImVec2 pos, float w)
     float cy = pos.y + h * .5f;
     float x  = pos.x + 12.f;
 
-    // ── Logo (20x20 at center of 38px titlebar) ──
-    // SVG 22x22 mapped to 20x20: outer circle r=9 in SVG -> scale = 10/11 * 9 ≈ 9px radius displayed
-    float logoR = 9.f; // outer circle display radius
-    ImVec2 logoC = {x + logoR + 1.f, cy}; // +1 to not clip left edge
+    // Logo
+    float logoR = 9.f;
+    ImVec2 logoC = {x + logoR + 1.f, cy};
     DrawLogo(dl, logoC, logoR, C_ACCENT);
-    x += logoR * 2.f + 8.f; // gap sp2=8 after logo
+    x += logoR * 2.f + 8.f;
 
-    // ── "SIGHT" white + "LINE" teal ──
-    // HTML: <span>Sightline</span> font-size 14px font-weight 600 letter-spacing -0.3px
-    // We split at "LINE" since that's the teal part per the concept
+    // "SIGHT" white + "LINE" teal
     const char* part1 = "SIGHT";
     const char* part2 = "LINE";
-    float fontY = cy - 6.5f; // vertically center 13px font in 38px bar
+    float fontH = 13.f;
+    float fontY = cy - fontH * .5f;
     ImVec2 s1 = TS(part1);
-    dl->AddText({x, fontY}, C_TEXT, part1);
-    dl->AddText({x + s1.x, fontY}, C_ACCENT, part2);
+    Txt(dl,{x, fontY},C_TEXT,part1);
+    Txt(dl,{x + s1.x, fontY},C_ACCENT,part2);
     x += s1.x + TS(part2).x + 10.f;
 
-    // ── Nav back/forward buttons (28x28 each) ──
-    // HTML: .titlebar-nav buttons with < > chevrons
+    // Nav back/forward
     {
         float btnSz = 28.f;
         float by = cy - btnSz * .5f;
@@ -504,7 +486,6 @@ static void DrawTitlebar(ImDrawList* dl, ImVec2 pos, float w)
         ImGui::InvisibleButton("##navback", {btnSz, btnSz});
         bool hovB = ImGui::IsItemHovered();
         if(hovB) dl->AddRectFilled({x, by}, {x+btnSz, by+btnSz}, C_SURFACE3, 4.f);
-        // < chevron
         dl->AddLine({x+btnSz*.58f, cy-4.f}, {x+btnSz*.38f, cy}, C_TEXT_MUTED, 1.5f);
         dl->AddLine({x+btnSz*.38f, cy},     {x+btnSz*.58f, cy+4.f}, C_TEXT_MUTED, 1.5f);
         x += btnSz + 2.f;
@@ -513,13 +494,12 @@ static void DrawTitlebar(ImDrawList* dl, ImVec2 pos, float w)
         ImGui::InvisibleButton("##navfwd", {btnSz, btnSz});
         bool hovF = ImGui::IsItemHovered();
         if(hovF) dl->AddRectFilled({x, by}, {x+btnSz, by+btnSz}, C_SURFACE3, 4.f);
-        // > chevron
         dl->AddLine({x+btnSz*.42f, cy-4.f}, {x+btnSz*.62f, cy}, C_TEXT_MUTED, 1.5f);
         dl->AddLine({x+btnSz*.62f, cy},     {x+btnSz*.42f, cy+4.f}, C_TEXT_MUTED, 1.5f);
         x += btnSz + 8.f;
     }
 
-    // ── Nav tabs: Home (active underline), Trending, Library, History ──
+    // Nav tabs
     {
         const char* navs[] = {"Home","Trending","Library","History"};
         for(int i = 0; i < 4; i++){
@@ -530,8 +510,7 @@ static void DrawTitlebar(ImDrawList* dl, ImVec2 pos, float w)
             ImGui::InvisibleButton(navId, {tw, h - 6.f});
             bool hov = ImGui::IsItemHovered();
             ImU32 tc = (i == 0) ? C_TEXT : (hov ? C_TEXT : C_TEXT_MUTED);
-            dl->AddText({x, cy - ts2.y * .5f}, tc, navs[i]);
-            // active underline for Home
+            Txt(dl,{x, cy - ts2.y * .5f},tc,navs[i]);
             if(i == 0){
                 dl->AddRectFilled({x, pos.y+h-2.f}, {x+ts2.x, pos.y+h}, C_ACCENT);
             }
@@ -539,38 +518,32 @@ static void DrawTitlebar(ImDrawList* dl, ImVec2 pos, float w)
         }
     }
 
-    // ── Right side: search box + settings icon ──
-    // HTML: .titlebar-right { flex-shrink:0 } at the far right
+    // Right side: search + settings
     float rightPad = 12.f;
     float settingsSz = 28.f;
     float searchW = 160.f, searchH = 26.f;
     float searchX = pos.x + w - rightPad - settingsSz - 4.f - searchW;
     float searchY = cy - searchH * .5f;
 
-    // search box: background surface3, border, border-radius r-sm=5
     RectFill(dl, {searchX, searchY}, {searchW, searchH}, C_SURFACE3, 5.f);
     Rect(dl, {searchX, searchY}, {searchW, searchH}, C_BORDER, 5.f);
 
-    // placeholder text
     ImVec2 pt = TS(g_search);
-    dl->AddText({searchX + 8.f, searchY + (searchH - pt.y) * .5f}, C_TEXT_FAINT, g_search);
+    Txt(dl,{searchX + 8.f, searchY + (searchH - pt.y) * .5f},C_TEXT_FAINT,g_search);
 
-    // search button on the right side of the box (HTML: <button>Search</button>)
     float sbW = 52.f;
     float sbX = searchX + searchW - sbW;
     dl->AddRectFilled({sbX, searchY+1.f}, {searchX+searchW-1.f, searchY+searchH-1.f}, C_ACCENT, 4.f);
     const char* srchLbl = "Search";
     ImVec2 sl = TS(srchLbl);
-    dl->AddText({sbX + (sbW - sl.x) * .5f, searchY + (searchH - sl.y) * .5f}, C_WHITE, srchLbl);
+    Txt(dl,{sbX + (sbW - sl.x) * .5f, searchY + (searchH - sl.y) * .5f},C_WHITE,srchLbl);
 
-    // settings / dots button
     float sx2 = pos.x + w - rightPad - settingsSz;
     float sy2 = cy - settingsSz * .5f;
     ImGui::SetCursorScreenPos({sx2, sy2});
     ImGui::InvisibleButton("##settings", {settingsSz, settingsSz});
     bool sHov = ImGui::IsItemHovered();
     if(sHov) dl->AddRectFilled({sx2, sy2}, {sx2+settingsSz, sy2+settingsSz}, C_SURFACE3, 4.f);
-    // ⚙ approximate: 3 vertical dots
     IconDots(dl, {sx2 + settingsSz * .5f, cy}, 7.f, C_TEXT_MUTED);
 }
 
@@ -578,10 +551,8 @@ static void DrawTitlebar(ImDrawList* dl, ImVec2 pos, float w)
 static void DrawVideoArea(ImDrawList* dl,ImVec2 pos,float w,float h)
 {
     RectFill(dl,pos,{w,h},C_BLACK);
-    // subtle gradient overlay at bottom
     dl->AddRectFilledMultiColor(pos,{pos.x+w,pos.y+h},
         COL32(0,0,0,0),COL32(0,0,0,0),COL32(0,0,0,160),COL32(0,0,0,160));
-    // play icon watermark
     ImVec2 cc = {pos.x+w*.5f, pos.y+h*.5f};
     dl->AddCircle(cc, 28.f, COL32(78,168,168,38), 0, 1.f);
     IconPlay(dl, cc, 14.f, COL32(78,168,168,38));
@@ -594,7 +565,6 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
     RectFill(dl,pos,{w,h},C_SURFACE);
     dl->AddLine(pos,{pos.x+w,pos.y},C_BORDER,1.f);
 
-    // Seekbar (16px hit area, HTML: .seekbar-track)
     {
         ImDrawList* sdl=ImGui::GetWindowDrawList();
         SeekBar(sdl,{pos.x,pos.y+2.f},w,16.f,&g_seek,0.42f,
@@ -604,24 +574,22 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
             C_TEXT);
     }
 
-    // time labels below seekbar (HTML: .seekbar-times)
     {
         int totalSec=600;
         int curSec=(int)(g_seek*totalSec);
         char cur[16]; snprintf(cur, sizeof(cur), "%d:%02d", curSec/60, curSec%60);
-        char tot[16] = "10:00";
-        dl->AddText({pos.x+4.f, pos.y+18.f}, C_TEXT_FAINT, cur);
+        const char* tot="10:00";
+        Txt(dl,{pos.x+4.f, pos.y+18.f},C_TEXT_FAINT,cur);
         ImVec2 ts2 = TS(tot);
-        dl->AddText({pos.x+w-ts2.x-4.f, pos.y+18.f}, C_TEXT_FAINT, tot);
+        Txt(dl,{pos.x+w-ts2.x-4.f, pos.y+18.f},C_TEXT_FAINT,tot);
     }
 
-    // ctrl-row (HTML: .controls-row)
     float cy = pos.y + 22.f + 15.f;
     float x  = pos.x + 12.f;
 
     ImDrawList* wdl=ImGui::GetWindowDrawList();
 
-    // play/pause (HTML: .ctrl-btn.primary — slightly larger, surface2 bg, border)
+    // play/pause
     {
         float btnSz = 34.f;
         ImGui::SetCursorScreenPos({x, cy-btnSz*.5f});
@@ -636,42 +604,36 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
         x+=btnSz+4.f;
     }
 
-    // -10s
     if(IconBtn("##m10",{x,cy-15.f},30.f)){
         g_seek-=10.f/600.f; if(g_seek<0.f)g_seek=0.f;
     }
     IconSkip(wdl,{x+15.f,cy},10.f,C_TEXT_MUTED,false);
     x+=34.f;
 
-    // +10s
     if(IconBtn("##p10",{x,cy-15.f},30.f)){
         g_seek+=10.f/600.f; if(g_seek>1.f)g_seek=1.f;
     }
     IconSkip(wdl,{x+15.f,cy},10.f,C_TEXT_MUTED,true);
     x+=34.f;
 
-    // volume
     IconVolume(wdl,{x+9.f,cy},9.f,C_TEXT_MUTED);
     x+=20.f;
     VolBar(wdl,{x,cy-7.f},70.f,14.f,&g_vol);
     x+=76.f;
 
-    // right side controls
     float rx=pos.x+w-12.f;
 
-    // fullscreen
     rx-=30.f;
     if(IconBtn("##fs",{rx,cy-13.f},26.f)){}
     IconFullscreen(wdl,{rx+13.f,cy},9.f,C_TEXT_MUTED);
 
-    // quality dropdown
     rx-=58.f;
     RectFill(wdl,{rx,cy-11.f},{52.f,22.f},C_SURFACE2,5.f);
     Rect(wdl,{rx,cy-11.f},{52.f,22.f},C_BORDER,5.f);
     ImGui::SetCursorScreenPos({rx,cy-11.f});
     ImGui::InvisibleButton("##qual",{52.f,22.f});
     if(ImGui::IsItemClicked()) g_quality=(g_quality+1)%g_qualityCount;
-    wdl->AddText({rx+6.f,cy-6.f},C_ACCENT,g_qualityOpts[g_quality]);
+    Txt(wdl,{rx+6.f,cy-6.f},C_ACCENT,g_qualityOpts[g_quality]);
 }
 
 // ─── action bar ──────────────────────────────────────────────
@@ -689,7 +651,7 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
 
     ImDrawList* wdl=ImGui::GetWindowDrawList();
 
-    // ── Like pill (accent style) ──
+    // Like pill
     {
         const char* cnt="248K";
         ImVec2 cs=TS(cnt);
@@ -703,11 +665,11 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         wdl->AddRect({x,by},{x+pillW,by+btnH},hov?C_ACCENT:C_ACCENT_LINE,8.f,0,1.f);
         IconThumbUp(wdl,{x+iconSz*.5f+8.f,cy},iconSz*.5f,C_ACCENT);
         wdl->AddLine({x+iconSz+14.f,by+6.f},{x+iconSz+14.f,by+btnH-6.f},C_ACCENT_LINE,1.f);
-        wdl->AddText({x+iconSz+18.f,cy-cs.y*.5f},C_ACCENT,cnt);
+        Txt(wdl,{x+iconSz+18.f,cy-cs.y*.5f},C_ACCENT,cnt);
         x+=pillW+4.f;
     }
 
-    // ── Dislike ──
+    // Dislike
     {
         const char* lbl="Dislike";
         ImVec2 ls=TS(lbl);
@@ -721,15 +683,14 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
         ImU32 ic=hov?C_ERROR:C_TEXT_MUTED;
         IconThumbDown(wdl,{x+iconSz*.5f+7.f,cy},iconSz*.5f,ic);
-        wdl->AddText({x+iconSz+12.f,cy-ls.y*.5f},hov?C_TEXT:C_TEXT_MUTED,lbl);
+        Txt(wdl,{x+iconSz+12.f,cy-ls.y*.5f},hov?C_TEXT:C_TEXT_MUTED,lbl);
         x+=pillW+4.f;
     }
 
-    // separator
     wdl->AddLine({x+2.f,by+6.f},{x+2.f,by+btnH-6.f},C_BORDER,1.f);
     x+=8.f;
 
-    // ── Share ──
+    // Share
     {
         const char* lbl="Share";
         ImVec2 ls=TS(lbl);
@@ -743,11 +704,11 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
         ImU32 ic=hov?C_TEXT:C_TEXT_MUTED;
         IconShare(wdl,{x+iconSz*.5f+7.f,cy},iconSz*.5f,ic);
-        wdl->AddText({x+iconSz+12.f,cy-ls.y*.5f},ic,lbl);
+        Txt(wdl,{x+iconSz+12.f,cy-ls.y*.5f},ic,lbl);
         x+=pillW+4.f;
     }
 
-    // ── Download ──
+    // Download
     {
         const char* lbl="Download";
         ImVec2 ls=TS(lbl);
@@ -761,15 +722,14 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
         ImU32 ic=hov?C_TEXT:C_TEXT_MUTED;
         IconDownload(wdl,{x+iconSz*.5f+7.f,cy},iconSz*.5f,ic);
-        wdl->AddText({x+iconSz+12.f,cy-ls.y*.5f},ic,lbl);
+        Txt(wdl,{x+iconSz+12.f,cy-ls.y*.5f},ic,lbl);
         x+=pillW+4.f;
     }
 
-    // separator
     wdl->AddLine({x+2.f,by+6.f},{x+2.f,by+btnH-6.f},C_BORDER,1.f);
     x+=8.f;
 
-    // ── More (dots) ──
+    // More dots
     {
         float pillW=34.f;
         ImGui::SetCursorScreenPos({x,by});
@@ -782,10 +742,12 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         x+=pillW+4.f;
     }
 
-    // right: meta
+    // Right: meta — use bullet U+2022 as ASCII middot to avoid font issues
+    // The UTF-8 bytes for U+2022 (BULLET) are \xe2\x80\xa2
+    // They will now render correctly with the Cousine font + full glyph ranges.
     const char* meta="1.7B views  \xe2\x80\xa2  Jul 28, 1987";
     ImVec2 ms=TS(meta);
-    wdl->AddText({pos.x+w-ms.x-12.f,cy-ms.y*.5f},C_TEXT_FAINT,meta);
+    Txt(wdl,{pos.x+w-ms.x-12.f,cy-ms.y*.5f},C_TEXT_FAINT,meta);
 }
 
 // ─── info / description zone ─────────────────────────────────
@@ -794,19 +756,23 @@ static void DrawInfoZone(ImDrawList* dl,ImVec2 pos,float w,float& contentH)
     float x=pos.x+12.f, y=pos.y+10.f;
     float iw=w-24.f;
 
-    // title — 16px, weight 600
+    // Title at 16px — use dedicated g_font16 + Txt16
     const char* title="Rick Astley \xe2\x80\x94 Never Gonna Give You Up (Official Video) 4K Remaster";
-    dl->AddText(NULL,16.f,{x,y},C_TEXT,title,NULL,iw);
-    y+=40.f;
+    ImVec2 titleSz = (g_font16 ? g_font16 : g_font13)->CalcTextSizeA(
+        g_font16 ? 16.f : 13.f, FLT_MAX, iw, title);
+    Txt16(dl,{x,y},C_TEXT,title,iw);
+    // Advance by measured height + a small gap (matches HTML line-height ~1.4)
+    y += titleSz.y + 8.f;
 
-    // meta row (11px, text-faint)
+    // Meta row (13px, text-faint)
+    // U+2022 bullet: \xe2\x80\xa2  |  U+2014 em dash: \xe2\x80\x94
     const char* meta2="1,782,034,159 views  \xe2\x80\xa2  Jul 28, 1987  \xe2\x80\xa2  #RickAstley #80s";
-    dl->AddText({x,y},C_TEXT_FAINT,meta2); y+=18.f;
+    Txt(dl,{x,y},C_TEXT_FAINT,meta2);
+    y+=18.f;
 
-    // divider
     dl->AddLine({pos.x,y+4.f},{pos.x+w,y+4.f},C_DIVIDER,1.f); y+=12.f;
 
-    // tabs
+    // Tabs
     float tx=x;
     if(TabBtn(dl,"Description",{tx,y},g_tab==0)){g_tab=0;}
     tx+=TS("Description").x+26.f;
@@ -814,22 +780,20 @@ static void DrawInfoZone(ImDrawList* dl,ImVec2 pos,float w,float& contentH)
     y+=32.f;
     dl->AddLine({pos.x,y},{pos.x+w,y},C_DIVIDER,1.f); y+=10.f;
 
-    // channel row
+    // Channel row
     dl->AddLine({pos.x,y},{pos.x+w,y},C_BORDER,1.f); y+=8.f;
     float avatarR=18.f;
     ImVec2 avatarC={x+avatarR,y+avatarR};
     dl->AddCircleFilled(avatarC,avatarR,COL32(0x19,0x20,0x28,255));
     dl->AddCircle(avatarC,avatarR,C_ACCENT_LINE,0,1.5f);
-    // "R" initial
     const char* ini = "R";
     ImVec2 initSz=TS(ini);
-    dl->AddText({avatarC.x-initSz.x*.5f,avatarC.y-initSz.y*.5f},C_ACCENT,ini);
+    Txt(dl,{avatarC.x-initSz.x*.5f,avatarC.y-initSz.y*.5f},C_ACCENT,ini);
 
     float cx2=x+avatarR*2.f+12.f;
-    dl->AddText({cx2,y+3.f},C_TEXT,"Rick Astley");
-    dl->AddText({cx2,y+19.f},C_TEXT_FAINT,"14.2M subscribers");
+    Txt(dl,{cx2,y+3.f},C_TEXT,"Rick Astley");
+    Txt(dl,{cx2,y+19.f},C_TEXT_FAINT,"14.2M subscribers");
 
-    // subscribe button
     float sbx=pos.x+w-140.f;
     ImGui::SetCursorScreenPos({sbx,y+5.f});
     ImGui::InvisibleButton("##sub",{112.f,28.f});
@@ -841,13 +805,11 @@ static void DrawInfoZone(ImDrawList* dl,ImVec2 pos,float w,float& contentH)
     wdl->AddRectFilled({sbx,y+5.f},{sbx+112.f,y+33.f},subbg,14.f);
     const char* sublbl= g_subscribed? "Subscribed":"Subscribe";
     ImVec2 sls=TS(sublbl);
-    wdl->AddText({sbx+(112.f-sls.x)*.5f,y+5.f+(28.f-sls.y)*.5f},subtc,sublbl);
+    Txt(wdl,{sbx+(112.f-sls.x)*.5f,y+5.f+(28.f-sls.y)*.5f},subtc,sublbl);
     y+=avatarR*2.f+10.f;
     dl->AddLine({pos.x,y},{pos.x+w,y},C_BORDER,1.f); y+=10.f;
 
-    // description / comments
     if(g_tab==0){
-        // desc-block: background surface2, border, radius r-md=8, padding sp3=12
         float dbY=y, dbW=iw;
         const char* desc=
             "The official video for \"Never Gonna Give You Up\" by Rick Astley.\n\n"
@@ -856,14 +818,18 @@ static void DrawInfoZone(ImDrawList* dl,ImVec2 pos,float w,float& contentH)
             "Billboard Hot 100. It also won the Brit Award for Best single in 1988.\n\n"
             "Stock Aitken and Waterman wrote and produced the track which was the\n"
             "lead-off single from Rick's debut LP 'Whenever You Need Somebody'.";
-        ImVec2 dsz = ImGui::CalcTextSize(desc, NULL, false, dbW-24.f);
+        // Measure with g_font13 at wrap width so dbH is accurate
+        ImVec2 dsz = g_font13
+            ? g_font13->CalcTextSizeA(13.f, FLT_MAX, dbW-24.f, desc)
+            : ImGui::CalcTextSize(desc, NULL, false, dbW-24.f);
         float dbH = dsz.y + 24.f;
         dl->AddRectFilled({x,dbY},{x+dbW,dbY+dbH},C_SURFACE2,8.f);
         dl->AddRect({x,dbY},{x+dbW,dbY+dbH},C_BORDER,8.f,0,1.f);
-        dl->AddText(NULL,0.f,{x+12.f,dbY+12.f},C_TEXT_MUTED,desc,NULL,dbW-24.f);
+        Txt(dl,{x+12.f,dbY+12.f},C_TEXT_MUTED,desc,dbW-24.f);
         y+=dbH+10.f;
     } else {
-        dl->AddText({x,y},C_TEXT_MUTED,"Comments are disabled for this video."); y+=22.f;
+        Txt(dl,{x,y},C_TEXT_MUTED,"Comments are disabled for this video.");
+        y+=22.f;
     }
     contentH = y - pos.y;
 }
@@ -873,40 +839,32 @@ static void DrawSidebar(ImDrawList* dl, ImVec2 pos, float w, float viewH)
 {
     float y = pos.y;
 
-    // ── Up Next header (HTML: .up-next-header height 40px) ──
     RectFill(dl, {pos.x, y}, {w, 40.f}, C_SURFACE);
     dl->AddLine({pos.x, y+40.f}, {pos.x+w, y+40.f}, C_BORDER, 1.f);
 
-    // "UP NEXT" label (10px, uppercase, letter-spacing, text-faint)
-    dl->AddText({pos.x+12.f, y+14.f}, C_TEXT_FAINT, "UP NEXT");
+    Txt(dl,{pos.x+12.f, y+14.f},C_TEXT_FAINT,"UP NEXT");
 
-    // Autoplay label + toggle pill on the right
     const char* autoTxt = "Autoplay";
     ImVec2 ats = TS(autoTxt);
     float togW=32.f, togH=16.f;
     float togX = pos.x + w - 12.f - togW;
     float togY = y + 12.f;
-    dl->AddText({togX - ats.x - 6.f, togY}, C_TEXT_MUTED, autoTxt);
+    Txt(dl,{togX - ats.x - 6.f, togY},C_TEXT_MUTED,autoTxt);
     dl->AddRectFilled({togX, togY}, {togX+togW, togY+togH}, C_ACCENT, togH*.5f);
     dl->AddCircleFilled({togX+togW-togH*.5f-1.f, togY+togH*.5f}, togH*.5f-2.f, C_WHITE);
-    // "ON" inside track
-    dl->AddText({togX+4.f, togY+2.f}, C_BLACK, "ON");
+    Txt(dl,{togX+4.f, togY+2.f},C_BLACK,"ON");
     y += 40.f;
 
-    // ── Now-playing card (first item, special style) ──
     float npH = 68.f;
     DrawNowPlayingCard(dl, {pos.x, y}, w);
     y += npH + 2.f;
 
-    // ── Related items ──
-    // HTML: .related-item height = thumb(56) + padding(8*2) = 72px
     float itemH = 72.f;
 
     for(int i = 1; i < g_relatedCount; i++){
         float iy = y + (float)(i-1) * itemH - g_sideScroll;
         if(iy + itemH < pos.y || iy > pos.y + viewH) continue;
 
-        // clip drawing to visible area
         ImGui::SetCursorScreenPos({pos.x, iy});
         char relId[32]; snprintf(relId, sizeof(relId), "##rel%d", i);
         ImGui::InvisibleButton(relId, {w, itemH-1.f});
@@ -916,7 +874,6 @@ static void DrawSidebar(ImDrawList* dl, ImVec2 pos, float w, float viewH)
         DrawRelatedItem(dl, {pos.x, iy}, w, g_related[i], i);
     }
 
-    // mouse-wheel scroll
     ImVec2 mp = ImGui::GetIO().MousePos;
     if(mp.x >= pos.x && mp.x <= pos.x+w && mp.y >= pos.y && mp.y <= pos.y+viewH){
         float wheel = ImGui::GetIO().MouseWheel;
@@ -934,25 +891,25 @@ static void DrawStatusBar(ImDrawList* dl,ImVec2 pos,float w)
     RectFill(dl,pos,{w,h},C_SURFACE);
     dl->AddLine(pos,{pos.x+w,pos.y},C_DIVIDER,1.f);
     float cy=pos.y+h*.5f;
+    // Vertical center for 13px font in this bar
+    float ty=cy-6.5f;
 
-    // status dot
     ImU32 dotc= g_playing? C_SUCCESS : COL32(0xC9,0xA9,0x6B,255);
     dl->AddCircleFilled({pos.x+10.f,cy},3.5f,dotc);
-    // glow ring
     dl->AddCircle({pos.x+10.f,cy},6.f,g_playing?COL32(107,170,120,51):COL32(201,169,107,51),0,1.f);
 
     const char* stateLabel= g_playing? "Playing":"Paused";
-    dl->AddText({pos.x+20.f,cy-6.f},C_TEXT_MUTED,stateLabel);
+    Txt(dl,{pos.x+20.f,ty},C_TEXT_MUTED,stateLabel);
 
-    // current title in center
+    // Center title — use TS() which now uses g_font13 so width is accurate
     const char* titleStatus="Rick Astley \xe2\x80\x94 Never Gonna Give You Up (Official Video) 4K Remaster";
     ImVec2 ts2=TS(titleStatus);
-    dl->AddText({pos.x+w*.5f-ts2.x*.5f,cy-6.f},C_TEXT_MUTED,titleStatus);
+    Txt(dl,{pos.x+w*.5f-ts2.x*.5f,ty},C_TEXT_MUTED,titleStatus);
 
-    // right: resolution + time
+    // Right: codec string — U+2022 bullet
     const char* codec="2160p  \xe2\x80\xa2  0:33 / 3:13";
     ImVec2 cs=TS(codec);
-    dl->AddText({pos.x+w-cs.x-10.f,cy-6.f},C_TEXT_FAINT,codec);
+    Txt(dl,{pos.x+w-cs.x-10.f,ty},C_TEXT_FAINT,codec);
 }
 
 // ─── main render frame ───────────────────────────────────────
@@ -986,32 +943,24 @@ static void RenderFrame()
     if(vidH > maxVidH) vidH = maxVidH;
     if(vidH < 120.f)   vidH = 120.f;
 
-    // titlebar
     DrawTitlebar(dl,{0.f,0.f},sw);
 
-    // video
     float mainY = TB_H;
     DrawVideoArea(dl,{0.f,mainY},MAIN_W,vidH);
     float sy = mainY + vidH;
 
-    // controls
     DrawControls(dl,{0.f,sy},MAIN_W);
-
-    // action bar
     DrawActionBar(dl,{0.f,sy+CTRL_H},MAIN_W);
 
-    // info zone
     float infoY = sy + CTRL_H + ACT_H;
     float infoHOut = 0.f;
     DrawInfoZone(dl,{0.f,infoY},MAIN_W,infoHOut);
 
-    // sidebar vertical divider
     float sideX = MAIN_W;
     RectFill(dl,{sideX,TB_H},{SIDE_W,sh-TB_H-SB_H},C_SURFACE);
     dl->AddLine({sideX,TB_H},{sideX,sh-SB_H},C_BORDER,1.f);
     DrawSidebar(dl,{sideX,TB_H},SIDE_W,sh-TB_H-SB_H);
 
-    // status bar
     DrawStatusBar(dl,{0.f,sh-SB_H},sw);
 
     ImGui::End();
@@ -1045,12 +994,79 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int nCmdShow)
     ImGui::CreateContext();
     ImGuiIO& io=ImGui::GetIO();
     io.IniFilename=NULL;
-    // Base font size 13px to match HTML font-size: 13px
-    io.Fonts->AddFontDefault();
-    ImFontConfig cfg;
-    cfg.SizePixels = 13.f;
-    io.Fonts->AddFontDefault(&cfg);
-    io.FontDefault = io.Fonts->Fonts[1];
+
+    // ── Font loading ──────────────────────────────────────────
+    // We need a font with full Latin + Latin Extended glyph support
+    // so that UTF-8 sequences like U+2014 (em dash) and U+2022 (bullet)
+    // render as the correct glyphs instead of '?'.
+    //
+    // Strategy (XP-compatible, no external DLLs):
+    //   1. Try to load Cousine-Regular.ttf next to the exe
+    //      (shipped in Dear ImGui misc/fonts/)
+    //   2. Fall back to DroidSans.ttf (also in imgui misc/fonts/)
+    //   3. Fall back to AddFontDefault() which only has ASCII —
+    //      in this case glyphs still show '?' but the app won't crash.
+    //
+    // Glyph ranges: Default (ASCII 0x20-0xFF) +
+    //               Latin Extended-A (0x0100-0x017F) +
+    //               Latin Extended-B (0x0180-0x024F) +
+    //               General Punctuation (0x2000-0x206F) covers em-dash / bullet
+    static const ImWchar glyph_ranges[] = {
+        0x0020, 0x00FF,  // Basic Latin + Latin-1 Supplement
+        0x0100, 0x024F,  // Latin Extended A+B
+        0x2000, 0x206F,  // General Punctuation (en-dash, em-dash, bullet, etc.)
+        0x20AC, 0x20AC,  // Euro sign
+        0,
+    };
+
+    ImFontConfig cfg13;
+    cfg13.SizePixels = 13.f;
+    cfg13.GlyphRanges = glyph_ranges;
+
+    ImFontConfig cfg16;
+    cfg16.SizePixels = 16.f;
+    cfg16.GlyphRanges = glyph_ranges;
+
+    // Probe font paths: next to exe, then current dir, then Windows fonts
+    const char* font_candidates[] = {
+        "Cousine-Regular.ttf",
+        "DroidSans.ttf",
+        "fonts/Cousine-Regular.ttf",
+        "fonts/DroidSans.ttf",
+        // Windows ships these monospace fonts; any one of them covers
+        // the General Punctuation block we need.
+        "C:\\Windows\\Fonts\\cour.ttf",   // Courier New
+        "C:\\Windows\\Fonts\\consola.ttf", // Consolas (Vista+, not XP)
+        "C:\\Windows\\Fonts\\arial.ttf",   // Arial — broad Unicode coverage
+        NULL
+    };
+
+    for(int fi = 0; font_candidates[fi] != NULL; fi++){
+        // Check if file exists before asking ImGui to load it
+        FILE* f = fopen(font_candidates[fi], "rb");
+        if(!f) continue;
+        fclose(f);
+
+        // Load 13px variant
+        ImFontConfig c13 = cfg13;
+        g_font13 = io.Fonts->AddFontFromFileTTF(font_candidates[fi], 13.f, &c13, glyph_ranges);
+
+        // Load 16px variant from same file
+        ImFontConfig c16 = cfg16;
+        c16.MergeMode = false;
+        g_font16 = io.Fonts->AddFontFromFileTTF(font_candidates[fi], 16.f, &c16, glyph_ranges);
+
+        break;
+    }
+
+    // If no TTF was found, fall back to the built-in Proggy Clean (ASCII only)
+    // The '?' glyphs will reappear for em-dash/bullet but the app will still run.
+    if(!g_font13){
+        g_font13 = io.Fonts->AddFontDefault();
+        g_font16 = g_font13; // same atlas slot, 13px — title will look a bit small
+    }
+
+    io.FontDefault = g_font13;
 
     ImGui::StyleColorsDark();
     ImGuiStyle& st=ImGui::GetStyle();
@@ -1059,7 +1075,6 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int nCmdShow)
     st.ScrollbarRounding=3.f;
     st.ScrollbarSize=6.f;
     st.FrameRounding=4.f;
-    // Override all ImGui colors to our dark palette
     st.Colors[ImGuiCol_PopupBg]     = U32toV4(C_SURFACE2);
     st.Colors[ImGuiCol_Border]      = U32toV4(C_BORDER);
     st.Colors[ImGuiCol_FrameBg]     = U32toV4(C_SURFACE3);
