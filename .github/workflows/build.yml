@@ -76,7 +76,38 @@ jobs:
           [System.IO.File]::WriteAllLines('src/font_electrolize.h', $lines)
           Write-Host "Generated src/font_electrolize.h ($($bytes.Length) bytes embedded)"
 
-      # ── 5. Generate logo header from PNG ───────────────────
+      # ── 5. Download Font Awesome 6 Solid and generate header ─
+      - name: Download Font Awesome 6 Solid TTF
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/FortAwesome/Font-Awesome/raw/6.x/webfonts/fa-solid-900.ttf'
+          Invoke-WebRequest -Uri $url -OutFile 'fa-solid-900.ttf'
+          Write-Host "Downloaded FA6 Solid: $((Get-Item 'fa-solid-900.ttf').Length) bytes"
+
+      - name: Generate src/font_icons.h
+        shell: pwsh
+        run: |
+          $bytes = [System.IO.File]::ReadAllBytes('fa-solid-900.ttf')
+          $lines = [System.Collections.Generic.List[string]]::new()
+          $lines.Add('#pragma once')
+          $lines.Add('')
+          $lines.Add('// Auto-generated from fa-solid-900.ttf (Font Awesome 6 Free, OFL 1.1)')
+          $lines.Add("static const unsigned int  fa6_solid_ttf_len = $($bytes.Length)u;")
+          $lines.Add('static const unsigned char fa6_solid_ttf[] = {')
+          $row = [System.Text.StringBuilder]::new()
+          for ($i = 0; $i -lt $bytes.Length; $i++) {
+            if ($i % 16 -eq 0) { $null = $row.Append('    ') }
+            $null = $row.Append("0x$($bytes[$i].ToString('x2')), ")
+            if (($i + 1) % 16 -eq 0 -or $i -eq $bytes.Length - 1) {
+              $lines.Add($row.ToString().TrimEnd())
+              $null = $row.Clear()
+            }
+          }
+          $lines.Add('};')
+          [System.IO.File]::WriteAllLines('src/font_icons.h', $lines)
+          Write-Host "Generated src/font_icons.h ($($bytes.Length) bytes embedded)"
+
+      # ── 6. Generate logo header from PNG ───────────────────
       - name: Generate src/logo_data.h from Sightline Logo.png
         shell: pwsh
         run: |
@@ -108,7 +139,7 @@ jobs:
           [System.IO.File]::WriteAllLines('src/logo_data.h', $lines)
           Write-Host "Generated src/logo_data.h ($($bytes.Length) bytes embedded)"
 
-      # ── 6. Compile icon resource (.rc -> .o) ───────────────
+      # ── 7. Compile icon resource (.rc -> .o) ───────────────
       - name: Compile icon resource with windres
         shell: msys2 {0}
         run: |
@@ -120,7 +151,7 @@ jobs:
             touch sightline_res_missing
           fi
 
-      # ── 7. Build ────────────────────────────────────────────
+      # ── 8. Build ────────────────────────────────────────────
       - name: Build SightlinePlayer.exe
         shell: msys2 {0}
         run: |
@@ -141,7 +172,6 @@ jobs:
           FLAGS="-m32 -O2 -mwindows -static -static-libgcc -static-libstdc++"
           LIBS="-ld3d9 -ldwmapi -luser32 -lgdi32 -lgdiplus -lshell32 -lole32 -loleaut32 -luuid"
 
-          # Link icon resource if it was compiled successfully
           if [ -f sightline_res.o ]; then
             g++ $FLAGS $DEFS $INC $SRC sightline_res.o -o SightlinePlayer.exe $LIBS
             echo "Build OK with icon — $(du -h SightlinePlayer.exe)"
@@ -150,7 +180,7 @@ jobs:
             echo "Build OK without icon — $(du -h SightlinePlayer.exe)"
           fi
 
-      # ── 8. Upload artifact ──────────────────────────────────
+      # ── 9. Upload artifact ──────────────────────────────────
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
