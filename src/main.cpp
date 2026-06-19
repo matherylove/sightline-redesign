@@ -306,10 +306,13 @@ static void IconShare(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 }
 static void IconDownload(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 {
+    // Arrow shaft pointing down
     float hw=r*.32f;
     dl->AddLine({c.x,c.y-r*.6f},{c.x,c.y+r*.05f},col,1.4f);
+    // Arrowhead
     dl->AddLine({c.x,c.y+r*.05f},{c.x-hw,c.y-r*.2f},col,1.4f);
     dl->AddLine({c.x,c.y+r*.05f},{c.x+hw,c.y-r*.2f},col,1.4f);
+    // Base line
     dl->AddLine({c.x-r*.55f,c.y+r*.5f},{c.x+r*.55f,c.y+r*.5f},col,1.4f);
 }
 static void IconDots(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
@@ -338,51 +341,51 @@ static void IconThumbDown(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
     dl->AddRectFilled({c.x-hw,c.y-hh},{c.x-hw+r*.22f,c.y-hh*.1f},col,1.f);
 }
 
-// FIX: arc radius reduced 0.65->0.45 so it doesn't crowd the
-// '10' label.  Label is now placed 6px below icon centre (was
-// centred on icon centre, causing arc/text overlap).
-// Button callers were also widened to 30px (see DrawControls).
+// FIX: IconSkip — draw number at true centre of the arc circle,
+//      not offset by the arc radius. The "10" label belongs inside
+//      the circular arc, so use the button centre (c) directly.
 static void IconSkip(ImDrawList* dl,ImVec2 c,float r,ImU32 col,bool forward)
 {
     if(forward){
-        dl->PathArcTo(c,r*.45f,3.14f*0.3f,3.14f*2.3f,14);
+        dl->PathArcTo(c,r*.65f,3.14f*0.3f,3.14f*2.3f,14);
     } else {
-        dl->PathArcTo(c,r*.45f,3.14f*2.7f,3.14f*0.7f+3.14f*2.f,14);
+        dl->PathArcTo(c,r*.65f,3.14f*2.7f,3.14f*0.7f+3.14f*2.f,14);
     }
     dl->PathStroke(col,false,1.4f);
     float ang = forward ? (3.14f*2.3f) : (3.14f*2.7f);
-    float ax = c.x + r*.45f * cosf(ang);
-    float ay = c.y + r*.45f * sinf(ang);
-    float as2 = r*.22f;
+    float ax = c.x + r*.65f * cosf(ang);
+    float ay = c.y + r*.65f * sinf(ang);
+    float as2 = r*.25f;
     ImVec2 tip={ax,ay};
     ImVec2 p1={ax+as2*cosf(ang+3.14f*0.7f),ay+as2*sinf(ang+3.14f*0.7f)};
     ImVec2 p2={ax+as2*cosf(ang-3.14f*0.7f),ay+as2*sinf(ang-3.14f*0.7f)};
     dl->AddTriangleFilled(tip,p1,p2,col);
-    // Label placed below arc centre so it clears the stroke
+    // Centre "10" label inside the arc circle (at c, not at arc tip)
     const char* num="10";
     ImVec2 ns=TS(num);
-    dl->AddText(g_font13,13.f,{c.x-ns.x*.5f, c.y+r*.45f+3.f},col,num);
+    dl->AddText(g_font13,13.f,{c.x-ns.x*.5f,c.y-ns.y*.5f+r*.05f},col,num);
 }
 
 // ─── seekbar / volbar ─────────────────────────────────────────
-// FIX: SeekBar and VolBar receive the caller's draw list (dl).
-// FIX: SeekBar adds 6px horizontal padding so the thumb circle
-//      at the extreme ends is never clipped by the bar edges.
-//      The InvisibleButton still covers the full width so the
-//      hit area is unaffected; value clamping uses the padded
-//      rail extents.
+// FIX: SeekBar now adds 6px horizontal padding on each side so the
+//      thumb circle at the extreme left/right is never clipped.
+//      The InvisibleButton still covers the full width (no change
+//      to hit-area). Value clamping uses the padded rail extents.
+//      Both SeekBar and VolBar receive the caller's draw list (dl)
+//      instead of calling GetWindowDrawList() internally, which
+//      avoids draw-order bugs when called from a custom dl context.
 static bool SeekBar(ImDrawList* dl,ImVec2 pos,float width,float height,
                     float* val,float buf,ImU32 cRail,ImU32 cBuf,ImU32 cFill,ImU32 cThumb)
 {
-    // Register hit area over the full bar width (no padding needed for input)
+    // Hit area covers the full bar width
     ImGui::SetCursorScreenPos(pos);
     ImGui::InvisibleButton("##seek",{width,height});
     bool hov=ImGui::IsItemHovered();
     bool act=ImGui::IsItemActive();
     bool changed=false;
 
-    // Padded rail: 6px inset on each side so the thumb is never clipped
-    const float padX = 6.f;
+    // 6px inset on each side keeps the thumb circle inside the bar
+    const float padX  = 6.f;
     const float railX0 = pos.x + padX;
     const float railW  = width - padX * 2.f;
 
@@ -395,10 +398,9 @@ static bool SeekBar(ImDrawList* dl,ImVec2 pos,float width,float height,
     float cy  = pos.y + height * .5f;
     float rh  = (hov||act) ? 5.f : 3.f;
     float ry  = cy - rh * .5f;
-    // Draw rail, buffer fill, and value fill within padded bounds
-    dl->AddRectFilled({railX0,ry},{railX0+railW,      ry+rh},cRail,rh*.5f);
-    dl->AddRectFilled({railX0,ry},{railX0+railW*buf,  ry+rh},cBuf, rh*.5f);
-    dl->AddRectFilled({railX0,ry},{railX0+railW*(*val),ry+rh},cFill,rh*.5f);
+    dl->AddRectFilled({railX0,ry},{railX0+railW,         ry+rh},cRail,rh*.5f);
+    dl->AddRectFilled({railX0,ry},{railX0+railW*buf,     ry+rh},cBuf, rh*.5f);
+    dl->AddRectFilled({railX0,ry},{railX0+railW*(*val),  ry+rh},cFill,rh*.5f);
     if(hov||act){
         float tx = railX0 + railW * (*val);
         dl->AddCircleFilled({tx,cy},5.5f,cThumb);
@@ -463,23 +465,19 @@ static bool TabBtn(ImDrawList* dl,const char* label,ImVec2 pos,bool active)
 }
 
 // ─── logo drawing ────────────────────────────────────────────
-// FIX: logoAreaH is now (h - 2) for a taller display area.
-// FIX: scale base uses min(availH, texH) so a PNG whose native
-//      height is already smaller than availH is not upscaled
-//      beyond its natural size (avoids blurry up-scaling on XP).
-//      dstW cap raised to 140px.
+// FIX (logo size): DrawLogoArea uses the full availH as the render
+//      height.  Scale is computed against the texture's own height
+//      so we always fill the bar vertically.  dstW is capped at
+//      140px so a very wide PNG can't overflow into nav buttons.
 static void DrawLogoArea(ImDrawList* dl, ImVec2 pos, float availH)
 {
     if(g_logoTex && g_logoTexW > 0 && g_logoTexH > 0){
-        // Use the smaller of availH and the texture's native height as
-        // the scaling reference so we never upscale a small logo.
-        float scaleBase = (availH < (float)g_logoTexH) ? availH : (float)g_logoTexH;
-        float scale = scaleBase / (float)g_logoTexH;
+        float scale = availH / (float)g_logoTexH;
         float dstW  = (float)g_logoTexW * scale;
-        // Cap width so a wide PNG never overflows into nav buttons
+        // Cap width so a wide PNG doesn't overflow into the nav area
         if(dstW > 140.f){ scale = 140.f / (float)g_logoTexW; dstW = 140.f; }
         float dstH  = (float)g_logoTexH * scale;
-        // Vertically centre the logo within availH
+        // Vertically centre within availH (handles non-square PNGs cleanly)
         float yOff  = (availH - dstH) * 0.5f;
         dl->AddImage((ImTextureID)(intptr_t)g_logoTex,
             {pos.x, pos.y + yOff}, {pos.x+dstW, pos.y+yOff+dstH},
@@ -580,13 +578,9 @@ static void DrawRelatedItem(ImDrawList* dl,ImVec2 pos,float w,const RelItem& ite
 }
 
 // ─── titlebar ────────────────────────────────────────────────
-// FIX (logo): logoAreaH = h-2 (was h-4). DrawLogoArea uses
-//   min(availH, texH) as scale base and caps dstW at 140px.
-// FIX (nav buttons): background rect is always drawn (faint at
-//   rest, brighter on hover, surface2 tint on active press).
-//   Chevron lines are drawn AFTER the bg so they are always on
-//   top. IsItemActive() drives the pressed state for proper
-//   click feedback on XP/Vista D3D9.
+// FIX (logo): logoAreaH = h - 2 (was h - 8) so the PNG fills
+//      almost the full titlebar height.  logoAreaY = pos.y + 1
+//      to centre it within the extra space.
 static void DrawTitlebar(ImDrawList* dl,ImVec2 pos,float w)
 {
     float h=38.f;
@@ -596,69 +590,41 @@ static void DrawTitlebar(ImDrawList* dl,ImVec2 pos,float w)
     float cy=pos.y+h*.5f;
     float x =pos.x+8.f;
 
-    // ── Logo ──────────────────────────────────────────────────
-    float logoAreaH = h - 2.f;   // FIX: was h-4
+    // ── Logo only (no text label) ────────────────────────────
+    // FIX: use h-2 so the logo occupies 36px of the 38px bar height
+    float logoAreaH = h - 2.f;   // was h - 8.f
     float logoAreaY = pos.y + 1.f;
     DrawLogoArea(dl, {x, logoAreaY}, logoAreaH);
     if(g_logoTex && g_logoTexH > 0){
-        float scaleBase = (logoAreaH < (float)g_logoTexH) ? logoAreaH : (float)g_logoTexH;
-        float scale = scaleBase / (float)g_logoTexH;
+        float scale = logoAreaH / (float)g_logoTexH;
         float dstW  = (float)g_logoTexW * scale;
         if(dstW > 140.f) dstW = 140.f;
         x += dstW + 12.f;
     } else {
+        // vector fallback circle width
         x += logoAreaH + 12.f;
     }
+    // NOTE: 'SIGHTLINE' text has been intentionally removed.
+    // Only the texture logo (or its vector fallback) is shown.
 
-    // ── Back / Forward nav buttons ────────────────────────────
-    // FIX: bg is drawn first (always visible), then chevron on top.
-    //      Three visual states: rest / hover / active (pressed).
     {
-        const float btnSz = 28.f;
-        const float bhalf = btnSz * 0.5f;
-
-        // Back button
-        {
-            ImVec2 bpos = {x, cy - bhalf};
-            ImGui::SetCursorScreenPos(bpos);
-            ImGui::InvisibleButton("##navback",{btnSz,btnSz});
-            bool hov = ImGui::IsItemHovered();
-            bool act = ImGui::IsItemActive();
-            // Always draw a faint bg so the button is always findable
-            ImU32 bg = act  ? C_SURFACE2 :
-                       hov  ? C_SURFACE3 :
-                               COL32(255,255,255,8);
-            dl->AddRectFilled(bpos,{bpos.x+btnSz,bpos.y+btnSz},bg,4.f);
-            if(hov || act)
-                dl->AddRect(bpos,{bpos.x+btnSz,bpos.y+btnSz},C_BORDER,4.f,0,1.f);
-            // Chevron drawn after bg so it's always on top
-            ImU32 arrowCol = (hov || act) ? C_TEXT : C_TEXT_MUTED;
-            dl->AddLine({bpos.x+btnSz*.58f,cy-4.f},{bpos.x+btnSz*.38f,cy},arrowCol,1.5f);
-            dl->AddLine({bpos.x+btnSz*.38f,cy},{bpos.x+btnSz*.58f,cy+4.f},arrowCol,1.5f);
-            x += btnSz + 2.f;
-        }
-
-        // Forward button
-        {
-            ImVec2 bpos = {x, cy - bhalf};
-            ImGui::SetCursorScreenPos(bpos);
-            ImGui::InvisibleButton("##navfwd",{btnSz,btnSz});
-            bool hov = ImGui::IsItemHovered();
-            bool act = ImGui::IsItemActive();
-            ImU32 bg = act  ? C_SURFACE2 :
-                       hov  ? C_SURFACE3 :
-                               COL32(255,255,255,8);
-            dl->AddRectFilled(bpos,{bpos.x+btnSz,bpos.y+btnSz},bg,4.f);
-            if(hov || act)
-                dl->AddRect(bpos,{bpos.x+btnSz,bpos.y+btnSz},C_BORDER,4.f,0,1.f);
-            ImU32 arrowCol = (hov || act) ? C_TEXT : C_TEXT_MUTED;
-            dl->AddLine({bpos.x+btnSz*.42f,cy-4.f},{bpos.x+btnSz*.62f,cy},arrowCol,1.5f);
-            dl->AddLine({bpos.x+btnSz*.62f,cy},{bpos.x+btnSz*.42f,cy+4.f},arrowCol,1.5f);
-            x += btnSz + 8.f;
-        }
+        float btnSz=28.f, by=cy-btnSz*.5f;
+        ImGui::SetCursorScreenPos({x,by});
+        ImGui::InvisibleButton("##navback",{btnSz,btnSz});
+        bool hovB=ImGui::IsItemHovered();
+        if(hovB) dl->AddRectFilled({x,by},{x+btnSz,by+btnSz},C_SURFACE3,4.f);
+        dl->AddLine({x+btnSz*.58f,cy-4.f},{x+btnSz*.38f,cy},C_TEXT_MUTED,1.5f);
+        dl->AddLine({x+btnSz*.38f,cy},{x+btnSz*.58f,cy+4.f},C_TEXT_MUTED,1.5f);
+        x+=btnSz+2.f;
+        ImGui::SetCursorScreenPos({x,by});
+        ImGui::InvisibleButton("##navfwd",{btnSz,btnSz});
+        bool hovF=ImGui::IsItemHovered();
+        if(hovF) dl->AddRectFilled({x,by},{x+btnSz,by+btnSz},C_SURFACE3,4.f);
+        dl->AddLine({x+btnSz*.42f,cy-4.f},{x+btnSz*.62f,cy},C_TEXT_MUTED,1.5f);
+        dl->AddLine({x+btnSz*.62f,cy},{x+btnSz*.42f,cy+4.f},C_TEXT_MUTED,1.5f);
+        x+=btnSz+8.f;
     }
 
-    // ── Nav links ─────────────────────────────────────────────
     {
         const char* navs[]={"Home","Trending","Library","History"};
         for(int i=0;i<4;i++){
@@ -675,7 +641,6 @@ static void DrawTitlebar(ImDrawList* dl,ImVec2 pos,float w)
         }
     }
 
-    // ── Search bar + settings ─────────────────────────────────
     float rightPad=12.f, settingsSz=28.f, searchW=160.f, searchH=26.f;
     float searchX=pos.x+w-rightPad-settingsSz-4.f-searchW;
     float searchY=cy-searchH*.5f;
@@ -702,4 +667,498 @@ static void DrawVideoArea(ImDrawList* dl,ImVec2 pos,float w,float h)
 {
     RectFill(dl,pos,{w,h},C_BLACK);
     dl->AddRectFilledMultiColor(pos,{pos.x+w,pos.y+h},
-        COL32(0,0,0,0),COL32(0,0,0,0),COL32(
+        COL32(0,0,0,0),COL32(0,0,0,0),COL32(0,0,0,160),COL32(0,0,0,160));
+    ImVec2 cc={pos.x+w*.5f,pos.y+h*.5f};
+    dl->AddCircle(cc,28.f,COL32(78,168,168,38),0,1.f);
+    IconPlay(dl,cc,14.f,COL32(78,168,168,38));
+}
+
+// ─── controls bar ────────────────────────────────────────────
+// Layout (top→bottom, bar height = 62px):
+//
+//   [0 .. 8]    top padding
+//   [8 .. 22]   seek rail hit-area  (14 px tall)
+//   [22.. 36]   time labels row     (rendered at seekY+seekH+2)
+//   [36.. 62]   buttons / volume / quality row  (cy at bar_top+47)
+//
+static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
+{
+    const float h      = 62.f;
+    const float seekH  = 14.f;
+    const float seekY  = pos.y + 8.f;
+
+    RectFill(dl,pos,{w,h},C_SURFACE);
+    dl->AddLine(pos,{pos.x+w,pos.y},C_BORDER,1.f);
+
+    // ── Seek rail ─────────────────────────────────────────────
+    SeekBar(dl,{pos.x,seekY},w,seekH,&g_seek,0.42f,
+        COL32(255,255,255,25),COL32(78,168,168,60),C_ACCENT,C_TEXT);
+
+    // ── Time labels (drawn AFTER seek so they're on top) ──────
+    {
+        // FIX: use a clip rect that spans the full bar width so
+        //      the left-side timestamp is never clipped off.
+        const float timeY = seekY + seekH + 2.f;
+        int totalSec=600, curSec=(int)(g_seek*totalSec);
+        char cur[16]; snprintf(cur,sizeof(cur),"%d:%02d",curSec/60,curSec%60);
+        const char* tot="10:00";
+        // Push a wide clip so neither label is trimmed
+        dl->PushClipRect({pos.x,pos.y},{pos.x+w,pos.y+h},true);
+        Txt(dl,{pos.x+6.f, timeY},C_TEXT_FAINT,cur);
+        ImVec2 ts2=TS(tot);
+        Txt(dl,{pos.x+w-ts2.x-6.f, timeY},C_TEXT_FAINT,tot);
+        dl->PopClipRect();
+    }
+
+    // ── Button / control row ──────────────────────────────────
+    // cy sits in the lower half of the bar, centred between the
+    // time-label row (~y+36) and the bar bottom (y+62) → y+47.
+    const float cy = pos.y + 47.f;
+    float x = pos.x + 12.f;
+
+    ImDrawList* wdl = ImGui::GetWindowDrawList();
+
+    // Play/Pause
+    {
+        const float btnSz = 28.f;   // FIX: reduced from 34 to match HTML reference
+        const float bhalf = btnSz * 0.5f;
+        ImVec2 bpos = {x, cy - bhalf};
+        ImGui::SetCursorScreenPos(bpos);
+        ImGui::InvisibleButton("##pp",{btnSz,btnSz});
+        bool hov = ImGui::IsItemHovered();
+        if(ImGui::IsItemActivated()) g_playing = !g_playing;
+        ImU32 bg = hov ? C_SURFACE3 : C_SURFACE2;
+        wdl->AddRectFilled(bpos,{bpos.x+btnSz,bpos.y+btnSz},bg,5.f);
+        wdl->AddRect(bpos,{bpos.x+btnSz,bpos.y+btnSz},hov?C_BORDER_STR:C_BORDER,5.f,0,1.f);
+        ImVec2 ic = {bpos.x + btnSz * 0.5f, bpos.y + btnSz * 0.5f};
+        if(g_playing) IconPause(wdl,ic,8.f,C_TEXT);
+        else          IconPlay (wdl,ic,8.f,C_TEXT);
+        x += btnSz + 4.f;
+    }
+
+    // Rewind -10s
+    {
+        const float bsz=26.f;
+        bool clicked = IconBtn("##m10",{x,cy-bsz*.5f},bsz);
+        IconSkip(wdl,{x+bsz*.5f,cy},9.f,C_TEXT_MUTED,false);
+        if(clicked){ g_seek-=10.f/600.f; if(g_seek<0.f)g_seek=0.f; }
+        x+=bsz+4.f;
+    }
+
+    // Forward +10s
+    {
+        const float bsz=26.f;
+        bool clicked = IconBtn("##p10",{x,cy-bsz*.5f},bsz);
+        IconSkip(wdl,{x+bsz*.5f,cy},9.f,C_TEXT_MUTED,true);
+        if(clicked){ g_seek+=10.f/600.f; if(g_seek>1.f)g_seek=1.f; }
+        x+=bsz+4.f;
+    }
+
+    // FIX: volume icon — use a fixed icon width so the vol slider
+    //      starts at a predictable offset and doesn't overlap or gap.
+    {
+        const float iconW = 22.f;  // bounding width of the volume icon
+        IconVolume(wdl,{x+iconW*.5f,cy},9.f,C_TEXT_MUTED);
+        x += iconW + 4.f;
+    }
+    VolBar(wdl,{x,cy-7.f},72.f,14.f,&g_vol);
+    x += 72.f + 6.f;
+
+    float rx=pos.x+w-12.f;
+
+    // Fullscreen (right-anchored)
+    rx-=26.f;
+    if(IconBtn("##fs",{rx,cy-13.f},26.f)){}
+    IconFullscreen(wdl,{rx+13.f,cy},9.f,C_TEXT_MUTED);
+
+    // FIX: quality badge — wider pill (60px) so "2160p" fits without
+    //      clipping, text properly centred vertically.
+    rx-=66.f;
+    {
+        const float qW=60.f, qH=22.f;
+        const float qX=rx, qY=cy-qH*.5f;
+        RectFill(wdl,{qX,qY},{qW,qH},C_SURFACE2,5.f);
+        Rect(wdl,{qX,qY},{qW,qH},C_BORDER,5.f);
+        ImGui::SetCursorScreenPos({qX,qY});
+        ImGui::InvisibleButton("##qual",{qW,qH});
+        if(ImGui::IsItemActivated()) g_quality=(g_quality+1)%g_qualityCount;
+        const char* qlbl=g_qualityOpts[g_quality];
+        ImVec2 qts=TS(qlbl);
+        // FIX: centre text both horizontally and vertically in the pill
+        Txt(wdl,{qX+(qW-qts.x)*.5f, qY+(qH-qts.y)*.5f},C_ACCENT,qlbl);
+    }
+}
+
+// ─── action bar ──────────────────────────────────────────────
+static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
+{
+    const float h=46.f,btnH=30.f,iconR=6.5f,padLR=10.f,gap=4.f;
+    RectFill(dl,pos,{w,h},C_SURFACE);
+    dl->AddLine({pos.x,pos.y},{pos.x+w,pos.y},C_BORDER,1.f);
+    dl->AddLine({pos.x,pos.y+h},{pos.x+w,pos.y+h},C_BORDER,1.f);
+    const float cy=pos.y+h*.5f, by=cy-btnH*.5f;
+    float x=pos.x+12.f;
+    ImDrawList* wdl=ImGui::GetWindowDrawList();
+
+    // FIX: like count corrected to "248K" (was "24BK" due to stray B)
+    {
+        const char* cnt="248K";
+        ImVec2 cs=TS(cnt);
+        float pillW=padLR+iconR*2.f+4.f+1.f+4.f+cs.x+padLR;
+        ImGui::SetCursorScreenPos({x,by});
+        ImGui::InvisibleButton("##like",{pillW,btnH});
+        bool hov=ImGui::IsItemHovered();
+        ImU32 bg=hov?C_ACCENT_SOFT:COL32(78,168,168,20);
+        wdl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
+        wdl->AddRect({x,by},{x+pillW,by+btnH},hov?C_ACCENT:C_ACCENT_LINE,8.f,0,1.f);
+        float iconCX=x+padLR+iconR;
+        IconThumbUp(wdl,{iconCX,cy},iconR,C_ACCENT);
+        float divX=iconCX+iconR+4.f;
+        wdl->AddLine({divX,by+6.f},{divX,by+btnH-6.f},C_ACCENT_LINE,1.f);
+        Txt(wdl,{divX+4.f,cy-cs.y*.5f},C_ACCENT,cnt);
+        x+=pillW+gap;
+    }
+    {
+        const char* lbl="Dislike"; ImVec2 ls=TS(lbl);
+        float pillW=padLR+iconR*2.f+6.f+ls.x+padLR;
+        ImGui::SetCursorScreenPos({x,by}); ImGui::InvisibleButton("##dis",{pillW,btnH});
+        bool hov=ImGui::IsItemHovered();
+        ImU32 bg=hov?COL32(255,255,255,18):COL32(255,255,255,8);
+        wdl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
+        wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
+        IconThumbDown(wdl,{x+padLR+iconR,cy},iconR,hov?C_ERROR:C_TEXT_MUTED);
+        Txt(wdl,{x+padLR+iconR*2.f+6.f,cy-ls.y*.5f},hov?C_TEXT:C_TEXT_MUTED,lbl);
+        x+=pillW+gap;
+    }
+    wdl->AddLine({x+2.f,by+6.f},{x+2.f,by+btnH-6.f},C_BORDER,1.f); x+=8.f;
+    {
+        const char* lbl="Share"; ImVec2 ls=TS(lbl);
+        float pillW=padLR+iconR*2.f+6.f+ls.x+padLR;
+        ImGui::SetCursorScreenPos({x,by}); ImGui::InvisibleButton("##shr",{pillW,btnH});
+        bool hov=ImGui::IsItemHovered();
+        ImU32 bg=hov?COL32(255,255,255,18):COL32(255,255,255,8);
+        wdl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
+        wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
+        IconShare(wdl,{x+padLR+iconR,cy},iconR,hov?C_TEXT:C_TEXT_MUTED);
+        Txt(wdl,{x+padLR+iconR*2.f+6.f,cy-ls.y*.5f},hov?C_TEXT:C_TEXT_MUTED,lbl);
+        x+=pillW+gap;
+    }
+    {
+        const char* lbl="Download"; ImVec2 ls=TS(lbl);
+        float pillW=padLR+iconR*2.f+6.f+ls.x+padLR;
+        ImGui::SetCursorScreenPos({x,by}); ImGui::InvisibleButton("##dl",{pillW,btnH});
+        bool hov=ImGui::IsItemHovered();
+        ImU32 bg=hov?COL32(255,255,255,18):COL32(255,255,255,8);
+        wdl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
+        wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
+        IconDownload(wdl,{x+padLR+iconR,cy},iconR,hov?C_TEXT:C_TEXT_MUTED);
+        Txt(wdl,{x+padLR+iconR*2.f+6.f,cy-ls.y*.5f},hov?C_TEXT:C_TEXT_MUTED,lbl);
+        x+=pillW+gap;
+    }
+    wdl->AddLine({x+2.f,by+6.f},{x+2.f,by+btnH-6.f},C_BORDER,1.f); x+=8.f;
+    {
+        float pillW=34.f;
+        ImGui::SetCursorScreenPos({x,by}); ImGui::InvisibleButton("##more",{pillW,btnH});
+        bool hov=ImGui::IsItemHovered();
+        wdl->AddRectFilled({x,by},{x+pillW,by+btnH},hov?COL32(255,255,255,18):COL32(255,255,255,8),8.f);
+        wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
+        IconDots(wdl,{x+pillW*.5f,cy},7.f,hov?C_TEXT:C_TEXT_MUTED);
+    }
+    // FIX: meta string — "1.7B views" (not "1.78 views"); bullet is U+2022 via \xe2\x80\xa2
+    const char* meta="1.7B views  \xe2\x80\xa2  Jul 28, 1987";
+    ImVec2 ms=TS(meta);
+    Txt(wdl,{pos.x+w-ms.x-12.f,cy-ms.y*.5f},C_TEXT_FAINT,meta);
+}
+
+// ─── info / description zone ─────────────────────────────────
+static void DrawInfoZone(ImDrawList* dl,ImVec2 pos,float w,float& contentH)
+{
+    float x=pos.x+12.f, y=pos.y+10.f, iw=w-24.f;
+
+    const char* title="Rick Astley \xe2\x80\x94 Never Gonna Give You Up (Official Video) 4K Remaster";
+    ImVec2 titleSz=TS16(title,iw);
+    Txt16(dl,{x,y},C_TEXT,title,iw);
+    y+=titleSz.y+8.f;
+
+    const char* meta2="1,782,034,159 views  \xe2\x80\xa2  Jul 28, 1987  \xe2\x80\xa2  #RickAstley #80s";
+    ImVec2 metaSz=TS(meta2);
+    Txt(dl,{x,y},C_TEXT_FAINT,meta2); y+=metaSz.y+6.f;
+
+    dl->AddLine({pos.x,y+4.f},{pos.x+w,y+4.f},C_DIVIDER,1.f); y+=12.f;
+
+    float tx=x;
+    if(TabBtn(dl,"Description",{tx,y},g_tab==0)){g_tab=0;} tx+=TS("Description").x+26.f;
+    if(TabBtn(dl,"Comments",{tx,y},g_tab==1)){g_tab=1;}
+    y+=32.f;
+    dl->AddLine({pos.x,y},{pos.x+w,y},C_DIVIDER,1.f); y+=10.f;
+    dl->AddLine({pos.x,y},{pos.x+w,y},C_BORDER,1.f); y+=8.f;
+
+    float avatarR=18.f;
+    ImVec2 avatarC={x+avatarR,y+avatarR};
+    dl->AddCircleFilled(avatarC,avatarR,COL32(0x19,0x20,0x28,255));
+    dl->AddCircle(avatarC,avatarR,C_ACCENT_LINE,0,1.5f);
+    const char* ini="R"; ImVec2 initSz=TS(ini);
+    Txt(dl,{avatarC.x-initSz.x*.5f,avatarC.y-initSz.y*.5f},C_ACCENT,ini);
+
+    float cx2=x+avatarR*2.f+12.f;
+    Txt(dl,{cx2,y+3.f},C_TEXT,"Rick Astley");
+    Txt(dl,{cx2,y+19.f},C_TEXT_FAINT,"14.2M subscribers");
+
+    float sbx=pos.x+w-140.f;
+    ImGui::SetCursorScreenPos({sbx,y+5.f});
+    ImGui::InvisibleButton("##sub",{112.f,28.f});
+    bool subHov=ImGui::IsItemHovered();
+    if(ImGui::IsItemActivated()) g_subscribed=!g_subscribed;
+    ImDrawList* wdl=ImGui::GetWindowDrawList();
+    ImU32 subbg=g_subscribed?C_SURFACE3:(subHov?C_ACCENT_HOV:C_ACCENT);
+    wdl->AddRectFilled({sbx,y+5.f},{sbx+112.f,y+33.f},subbg,14.f);
+    const char* sublbl=g_subscribed?"Subscribed":"Subscribe";
+    ImVec2 sls=TS(sublbl);
+    Txt(wdl,{sbx+(112.f-sls.x)*.5f,y+5.f+(28.f-sls.y)*.5f},g_subscribed?C_TEXT_MUTED:C_WHITE,sublbl);
+    y+=avatarR*2.f+10.f;
+    dl->AddLine({pos.x,y},{pos.x+w,y},C_BORDER,1.f); y+=10.f;
+
+    if(g_tab==0){
+        float dbY=y, dbW=iw;
+        const char* desc=
+            "The official video for \"Never Gonna Give You Up\" by Rick Astley.\n\n"
+            "Never Gonna Give You Up was a global smash on its release in July 1987,\n"
+            "topping the charts in 25 countries including Rick's native UK and the US\n"
+            "Billboard Hot 100. It also won the Brit Award for Best single in 1988.\n\n"
+            "Stock Aitken and Waterman wrote and produced the track which was the\n"
+            "lead-off single from Rick's debut LP 'Whenever You Need Somebody'.";
+        ImVec2 dsz=TS(desc,dbW-24.f);
+        float dbH=dsz.y+24.f;
+        dl->AddRectFilled({x,dbY},{x+dbW,dbY+dbH},C_SURFACE2,8.f);
+        dl->AddRect({x,dbY},{x+dbW,dbY+dbH},C_BORDER,8.f,0,1.f);
+        Txt(dl,{x+12.f,dbY+12.f},C_TEXT_MUTED,desc,dbW-24.f);
+        y+=dbH+10.f;
+    } else {
+        Txt(dl,{x,y},C_TEXT_MUTED,"Comments are disabled for this video.");
+        y+=22.f;
+    }
+    contentH=y-pos.y;
+}
+
+// ─── sidebar ─────────────────────────────────────────────────
+static void DrawSidebar(ImDrawList* dl,ImVec2 pos,float w,float viewH)
+{
+    float y=pos.y;
+
+    RectFill(dl,{pos.x,y},{w,40.f},C_SURFACE);
+    dl->AddLine({pos.x,y+40.f},{pos.x+w,y+40.f},C_BORDER,1.f);
+    const char* upnext="UP NEXT";
+    ImVec2 unsz=TS(upnext);
+    Txt(dl,{pos.x+12.f,y+20.f-unsz.y*.5f},C_TEXT_FAINT,upnext);
+
+    const char* autoTxt="Autoplay"; ImVec2 ats=TS(autoTxt);
+    float togW=32.f,togH=16.f,togX=pos.x+w-12.f-togW,togY=y+12.f;
+    Txt(dl,{togX-ats.x-6.f,togY},C_TEXT_MUTED,autoTxt);
+    dl->AddRectFilled({togX,togY},{togX+togW,togY+togH},C_ACCENT,togH*.5f);
+    dl->AddCircleFilled({togX+togW-togH*.5f-1.f,togY+togH*.5f},togH*.5f-2.f,C_WHITE);
+    ImVec2 onSz=TS("ON");
+    Txt(dl,{togX+4.f,togY+(togH-onSz.y)*.5f},C_BLACK,"ON");
+    y+=40.f;
+
+    DrawNowPlayingCard(dl,{pos.x,y},w);
+    y+=68.f+2.f;
+
+    dl->PushClipRect({pos.x,y},{pos.x+w,pos.y+viewH},true);
+
+    const float itemH=72.f;
+    for(int i=1;i<g_relatedCount;i++){
+        float iy=y+(float)(i-1)*itemH-g_sideScroll;
+        if(iy+itemH < pos.y || iy > pos.y+viewH) continue;
+
+        ImGui::SetCursorScreenPos({pos.x,iy});
+        char relId[32]; snprintf(relId,sizeof(relId),"##rel%d",i);
+        ImGui::InvisibleButton(relId,{w,itemH-1.f});
+        bool hov=ImGui::IsItemHovered();
+        if(hov) RectFill(dl,{pos.x,iy},{w,itemH-1.f},COL32(255,255,255,8));
+        DrawRelatedItem(dl,{pos.x,iy},w,g_related[i],i);
+    }
+
+    dl->PopClipRect();
+
+    ImVec2 mp=ImGui::GetIO().MousePos;
+    if(mp.x>=pos.x && mp.x<=pos.x+w && mp.y>=pos.y && mp.y<=pos.y+viewH){
+        float wheel=ImGui::GetIO().MouseWheel;
+        g_sideScroll-=wheel*24.f;
+        float maxS=(float)(g_relatedCount-2)*itemH;
+        if(g_sideScroll<0.f) g_sideScroll=0.f;
+        if(g_sideScroll>maxS) g_sideScroll=maxS;
+    }
+}
+
+// ─── status bar ──────────────────────────────────────────────
+static void DrawStatusBar(ImDrawList* dl,ImVec2 pos,float w)
+{
+    float h=22.f;
+    RectFill(dl,pos,{w,h},C_SURFACE);
+    dl->AddLine(pos,{pos.x+w,pos.y},C_DIVIDER,1.f);
+    float cy=pos.y+h*.5f, ty=cy-TS("X").y*.5f;
+    ImU32 dotc=g_playing?C_SUCCESS:COL32(0xC9,0xA9,0x6B,255);
+    dl->AddCircleFilled({pos.x+10.f,cy},3.5f,dotc);
+    dl->AddCircle({pos.x+10.f,cy},6.f,g_playing?COL32(107,170,120,51):COL32(201,169,107,51),0,1.f);
+    const char* stateLabel=g_playing?"Playing":"Paused";
+    Txt(dl,{pos.x+20.f,ty},C_TEXT_MUTED,stateLabel);
+    const char* titleStatus="Rick Astley \xe2\x80\x94 Never Gonna Give You Up (Official Video) 4K Remaster";
+    ImVec2 ts2=TS(titleStatus);
+    Txt(dl,{pos.x+w*.5f-ts2.x*.5f,ty},C_TEXT_MUTED,titleStatus);
+    const char* codec="2160p  \xe2\x80\xa2  0:33 / 3:13";
+    ImVec2 cs=TS(codec);
+    Txt(dl,{pos.x+w-cs.x-10.f,ty},C_TEXT_FAINT,codec);
+}
+
+// ─── main render frame ───────────────────────────────────────
+static void RenderFrame()
+{
+    ImGuiIO& io=ImGui::GetIO();
+    float sw=io.DisplaySize.x, sh=io.DisplaySize.y;
+
+    ImGui::SetNextWindowPos({0,0});
+    ImGui::SetNextWindowSize({sw,sh});
+    ImGui::PushStyleColor(ImGuiCol_WindowBg,U32toV4(C_BG));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{0,0});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,0.f);
+    ImGui::Begin("##root",NULL,
+        ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|
+        ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoScrollbar|
+        ImGuiWindowFlags_NoScrollWithMouse|ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+    ImDrawList* dl=ImGui::GetWindowDrawList();
+
+    const float TB_H  =38.f, SB_H=22.f, CTRL_H=62.f, ACT_H=46.f;
+    const float SIDE_W=300.f, MAIN_W=sw-SIDE_W;
+
+    float contentH=sh-TB_H-SB_H;
+    float vidH=MAIN_W*9.f/16.f;
+    float maxVidH=contentH-CTRL_H-ACT_H-260.f;
+    if(vidH>maxVidH) vidH=maxVidH;
+    if(vidH<120.f)   vidH=120.f;
+
+    DrawTitlebar(dl,{0.f,0.f},sw);
+
+    float mainY=TB_H;
+    DrawVideoArea(dl,{0.f,mainY},MAIN_W,vidH);
+    float sy=mainY+vidH;
+    DrawControls(dl,{0.f,sy},MAIN_W);
+    DrawActionBar(dl,{0.f,sy+CTRL_H},MAIN_W);
+
+    float infoY=sy+CTRL_H+ACT_H;
+    float infoHOut=0.f;
+    DrawInfoZone(dl,{0.f,infoY},MAIN_W,infoHOut);
+
+    float sideX=MAIN_W;
+    RectFill(dl,{sideX,TB_H},{SIDE_W,sh-TB_H-SB_H},C_SURFACE);
+    dl->AddLine({sideX,TB_H},{sideX,sh-SB_H},C_BORDER,1.f);
+    DrawSidebar(dl,{sideX,TB_H},SIDE_W,sh-TB_H-SB_H);
+
+    DrawStatusBar(dl,{0.f,sh-SB_H},sw);
+
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(1);
+}
+
+// ─── WinMain ─────────────────────────────────────────────────
+int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int nCmdShow)
+{
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+
+    WNDCLASSEXA wc={sizeof(wc)};
+    wc.style=CS_CLASSDC;
+    wc.lpfnWndProc=WndProc;
+    wc.hInstance=hInst;
+    wc.lpszClassName="SightlinePlayer";
+    RegisterClassExA(&wc);
+
+    g_hwnd=CreateWindowExA(0,"SightlinePlayer","Sightline Player",
+        WS_OVERLAPPEDWINDOW,100,100,1280,800,NULL,NULL,hInst,NULL);
+
+    if(!CreateDeviceD3D(g_hwnd)){
+        CleanupDevice();
+        UnregisterClassA(wc.lpszClassName,hInst);
+        CoUninitialize();
+        return 1;
+    }
+
+    ShowWindow(g_hwnd,nCmdShow);
+    UpdateWindow(g_hwnd);
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io=ImGui::GetIO();
+    io.IniFilename=NULL;
+
+    // ── Font loading (runtime check — no #if) ────────────────
+    if(HasElectrolize()){
+        ImFontConfig c13; c13.FontDataOwnedByAtlas=false;
+        g_font13=io.Fonts->AddFontFromMemoryTTF(
+            (void*)electrolize_regular_ttf,(int)electrolize_regular_ttf_len,
+            13.f,&c13,g_glyph_ranges);
+        ImFontConfig c16; c16.FontDataOwnedByAtlas=false;
+        g_font16=io.Fonts->AddFontFromMemoryTTF(
+            (void*)electrolize_regular_ttf,(int)electrolize_regular_ttf_len,
+            16.f,&c16,g_glyph_ranges);
+    }
+    if(!g_font13){ g_font13=io.Fonts->AddFontDefault(); g_font16=g_font13; }
+    io.FontDefault=g_font13;
+
+    ImGui::StyleColorsDark();
+    ImGuiStyle& st=ImGui::GetStyle();
+    st.WindowBorderSize=0.f; st.WindowRounding=0.f;
+    st.ScrollbarRounding=3.f; st.ScrollbarSize=6.f; st.FrameRounding=4.f;
+    st.Colors[ImGuiCol_PopupBg]    =U32toV4(C_SURFACE2);
+    st.Colors[ImGuiCol_Border]     =U32toV4(C_BORDER);
+    st.Colors[ImGuiCol_FrameBg]    =U32toV4(C_SURFACE3);
+    st.Colors[ImGuiCol_ScrollbarBg]=U32toV4(C_SURFACE);
+
+    ImGui_ImplWin32_Init(g_hwnd);
+    ImGui_ImplDX9_Init(g_pd3dDev);
+
+    // ── Load logo texture via WIC (runtime check) ─────────────
+    if(HasLogo()){
+        LoadPNGFromMemory(sightline_logo_png, sightline_logo_png_len,
+                          g_pd3dDev, &g_logoTex, &g_logoTexW, &g_logoTexH);
+    }
+
+    ImVec4 clearCol=U32toV4(C_BG);
+    MSG msg; ZeroMemory(&msg,sizeof(msg));
+    while(msg.message!=WM_QUIT){
+        if(PeekMessageA(&msg,NULL,0U,0U,PM_REMOVE)){
+            TranslateMessage(&msg);
+            DispatchMessageA(&msg);
+            continue;
+        }
+        ImGui_ImplDX9_NewFrame();
+        ImGui_ImplWin32_NewFrame();
+        ImGui::NewFrame();
+        RenderFrame();
+        ImGui::EndFrame();
+        g_pd3dDev->SetRenderState(D3DRS_ZENABLE,FALSE);
+        g_pd3dDev->SetRenderState(D3DRS_ALPHABLENDENABLE,FALSE);
+        g_pd3dDev->SetRenderState(D3DRS_SCISSORTESTENABLE,FALSE);
+        D3DCOLOR cc=D3DCOLOR_RGBA(
+            (int)(clearCol.x*255),(int)(clearCol.y*255),
+            (int)(clearCol.z*255),(int)(clearCol.w*255));
+        g_pd3dDev->Clear(0,NULL,D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER,cc,1.f,0);
+        if(g_pd3dDev->BeginScene()==D3D_OK){
+            ImGui::Render();
+            ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
+            g_pd3dDev->EndScene();
+        }
+        HRESULT hr=g_pd3dDev->Present(NULL,NULL,NULL,NULL);
+        if(hr==D3DERR_DEVICELOST &&
+           g_pd3dDev->TestCooperativeLevel()==D3DERR_DEVICENOTRESET)
+            ResetDevice();
+    }
+
+    ImGui_ImplDX9_Shutdown();
+    ImGui_ImplWin32_Shutdown();
+    ImGui::DestroyContext();
+    CleanupDevice();
+    UnregisterClassA(wc.lpszClassName,hInst);
+    CoUninitialize();
+    return 0;
+}
