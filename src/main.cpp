@@ -360,33 +360,42 @@ static void IconSkip(ImDrawList* dl,ImVec2 c,float r,ImU32 col,bool forward)
 }
 
 // ─── seekbar / volbar ─────────────────────────────────────────
-// FIX: SeekBar and VolBar now receive the caller's draw list (dl)
-// instead of calling ImGui::GetWindowDrawList() internally.
-// This guarantees all primitives are submitted to the same draw
-// list that the caller is already using, preventing z-order bugs
-// and the 'doubled / misplaced' visual on the seek rail.
+// FIX: SeekBar and VolBar receive the caller's draw list (dl).
+// FIX: SeekBar adds 6px horizontal padding so the thumb circle
+//      at the extreme ends is never clipped by the bar edges.
+//      The InvisibleButton still covers the full width so the
+//      hit area is unaffected; value clamping uses the padded
+//      rail extents.
 static bool SeekBar(ImDrawList* dl,ImVec2 pos,float width,float height,
                     float* val,float buf,ImU32 cRail,ImU32 cBuf,ImU32 cFill,ImU32 cThumb)
 {
+    // Register hit area over the full bar width (no padding needed for input)
     ImGui::SetCursorScreenPos(pos);
     ImGui::InvisibleButton("##seek",{width,height});
     bool hov=ImGui::IsItemHovered();
     bool act=ImGui::IsItemActive();
     bool changed=false;
+
+    // Padded rail: 6px inset on each side so the thumb is never clipped
+    const float padX = 6.f;
+    const float railX0 = pos.x + padX;
+    const float railW  = width - padX * 2.f;
+
     if(act){
         float mx=ImGui::GetIO().MousePos.x;
-        *val=(mx-pos.x)/width;
+        *val=(mx - railX0) / railW;
         if(*val<0.f)*val=0.f; if(*val>1.f)*val=1.f;
         changed=true;
     }
-    float cy=pos.y+height*.5f;
-    float rh=(hov||act)?5.f:3.f;
-    float ry=cy-rh*.5f;
-    dl->AddRectFilled({pos.x,ry},{pos.x+width,ry+rh},cRail,rh*.5f);
-    dl->AddRectFilled({pos.x,ry},{pos.x+width*buf,ry+rh},cBuf,rh*.5f);
-    dl->AddRectFilled({pos.x,ry},{pos.x+width*(*val),ry+rh},cFill,rh*.5f);
+    float cy  = pos.y + height * .5f;
+    float rh  = (hov||act) ? 5.f : 3.f;
+    float ry  = cy - rh * .5f;
+    // Draw rail, buffer fill, and value fill within padded bounds
+    dl->AddRectFilled({railX0,ry},{railX0+railW,      ry+rh},cRail,rh*.5f);
+    dl->AddRectFilled({railX0,ry},{railX0+railW*buf,  ry+rh},cBuf, rh*.5f);
+    dl->AddRectFilled({railX0,ry},{railX0+railW*(*val),ry+rh},cFill,rh*.5f);
     if(hov||act){
-        float tx=pos.x+width*(*val);
+        float tx = railX0 + railW * (*val);
         dl->AddCircleFilled({tx,cy},5.5f,cThumb);
     }
     return changed;
@@ -449,18 +458,23 @@ static bool TabBtn(ImDrawList* dl,const char* label,ImVec2 pos,bool active)
 }
 
 // ─── logo drawing ────────────────────────────────────────────
-// FIX: logoAreaH is now (h - 4) instead of (h - 8) so the PNG
-// fills more of the titlebar height. We also cap dstW at 120 px
-// to prevent very wide logos from eating into the nav area.
+// FIX: logoAreaH is now (h - 2) for a taller display area.
+// FIX: scale base uses min(availH, texH) so a PNG whose native
+//      height is already smaller than availH is not upscaled
+//      beyond its natural size (avoids blurry up-scaling on XP).
+//      dstW cap raised to 140px.
 static void DrawLogoArea(ImDrawList* dl, ImVec2 pos, float availH)
 {
     if(g_logoTex && g_logoTexW > 0 && g_logoTexH > 0){
-        float scale = availH / (float)g_logoTexH;
+        // Use the smaller of availH and the texture's native height as
+        // the scaling reference so we never upscale a small logo.
+        float scaleBase = (availH < (float)g_logoTexH) ? availH : (float)g_logoTexH;
+        float scale = scaleBase / (float)g_logoTexH;
         float dstW  = (float)g_logoTexW * scale;
         // Cap width so a wide PNG never overflows into nav buttons
-        if(dstW > 120.f){ scale = 120.f / (float)g_logoTexW; dstW = 120.f; }
+        if(dstW > 140.f){ scale = 140.f / (float)g_logoTexW; dstW = 140.f; }
         float dstH  = (float)g_logoTexH * scale;
-        // Vertically centre the (possibly shorter) logo within availH
+        // Vertically centre the logo within availH
         float yOff  = (availH - dstH) * 0.5f;
         dl->AddImage((ImTextureID)(intptr_t)g_logoTex,
             {pos.x, pos.y + yOff}, {pos.x+dstW, pos.y+yOff+dstH},
@@ -561,6 +575,13 @@ static void DrawRelatedItem(ImDrawList* dl,ImVec2 pos,float w,const RelItem& ite
 }
 
 // ─── titlebar ────────────────────────────────────────────────
+// FIX (logo): logoAreaH = h-2 (was h-4). DrawLogoArea uses
+//   min(availH, texH) as scale base and caps dstW at 140px.
+// FIX (nav buttons): background rect is always drawn (faint at
+//   rest, brighter on hover, surface2 tint on active press).
+//   Chevron lines are drawn AFTER the bg so they are always on
+//   top. IsItemActive() drives the pressed state for proper
+//   click feedback on XP/Vista D3D9.
 static void DrawTitlebar(ImDrawList* dl,ImVec2 pos,float w)
 {
     float h=38.f;
@@ -570,39 +591,69 @@ static void DrawTitlebar(ImDrawList* dl,ImVec2 pos,float w)
     float cy=pos.y+h*.5f;
     float x =pos.x+8.f;
 
-    // FIX: logoAreaH increased from (h-8) to (h-4) so the PNG
-    // fills more of the titlebar. DrawLogoArea also caps dstW at
-    // 120 px so wide logos don't overflow the navigation area.
-    float logoAreaH = h - 4.f;
-    float logoAreaY = pos.y + 2.f;
+    // ── Logo ──────────────────────────────────────────────────
+    float logoAreaH = h - 2.f;   // FIX: was h-4
+    float logoAreaY = pos.y + 1.f;
     DrawLogoArea(dl, {x, logoAreaY}, logoAreaH);
     if(g_logoTex && g_logoTexH > 0){
-        float scale = logoAreaH / (float)g_logoTexH;
+        float scaleBase = (logoAreaH < (float)g_logoTexH) ? logoAreaH : (float)g_logoTexH;
+        float scale = scaleBase / (float)g_logoTexH;
         float dstW  = (float)g_logoTexW * scale;
-        if(dstW > 120.f) dstW = 120.f;
+        if(dstW > 140.f) dstW = 140.f;
         x += dstW + 12.f;
     } else {
         x += logoAreaH + 12.f;
     }
 
+    // ── Back / Forward nav buttons ────────────────────────────
+    // FIX: bg is drawn first (always visible), then chevron on top.
+    //      Three visual states: rest / hover / active (pressed).
     {
-        float btnSz=28.f, by=cy-btnSz*.5f;
-        ImGui::SetCursorScreenPos({x,by});
-        ImGui::InvisibleButton("##navback",{btnSz,btnSz});
-        bool hovB=ImGui::IsItemHovered();
-        if(hovB) dl->AddRectFilled({x,by},{x+btnSz,by+btnSz},C_SURFACE3,4.f);
-        dl->AddLine({x+btnSz*.58f,cy-4.f},{x+btnSz*.38f,cy},C_TEXT_MUTED,1.5f);
-        dl->AddLine({x+btnSz*.38f,cy},{x+btnSz*.58f,cy+4.f},C_TEXT_MUTED,1.5f);
-        x+=btnSz+2.f;
-        ImGui::SetCursorScreenPos({x,by});
-        ImGui::InvisibleButton("##navfwd",{btnSz,btnSz});
-        bool hovF=ImGui::IsItemHovered();
-        if(hovF) dl->AddRectFilled({x,by},{x+btnSz,by+btnSz},C_SURFACE3,4.f);
-        dl->AddLine({x+btnSz*.42f,cy-4.f},{x+btnSz*.62f,cy},C_TEXT_MUTED,1.5f);
-        dl->AddLine({x+btnSz*.62f,cy},{x+btnSz*.42f,cy+4.f},C_TEXT_MUTED,1.5f);
-        x+=btnSz+8.f;
+        const float btnSz = 28.f;
+        const float bhalf = btnSz * 0.5f;
+
+        // Back button
+        {
+            ImVec2 bpos = {x, cy - bhalf};
+            ImGui::SetCursorScreenPos(bpos);
+            ImGui::InvisibleButton("##navback",{btnSz,btnSz});
+            bool hov = ImGui::IsItemHovered();
+            bool act = ImGui::IsItemActive();
+            // Always draw a faint bg so the button is always findable
+            ImU32 bg = act  ? C_SURFACE2 :
+                       hov  ? C_SURFACE3 :
+                               COL32(255,255,255,8);
+            dl->AddRectFilled(bpos,{bpos.x+btnSz,bpos.y+btnSz},bg,4.f);
+            if(hov || act)
+                dl->AddRect(bpos,{bpos.x+btnSz,bpos.y+btnSz},C_BORDER,4.f,0,1.f);
+            // Chevron drawn after bg so it's always on top
+            ImU32 arrowCol = (hov || act) ? C_TEXT : C_TEXT_MUTED;
+            dl->AddLine({bpos.x+btnSz*.58f,cy-4.f},{bpos.x+btnSz*.38f,cy},arrowCol,1.5f);
+            dl->AddLine({bpos.x+btnSz*.38f,cy},{bpos.x+btnSz*.58f,cy+4.f},arrowCol,1.5f);
+            x += btnSz + 2.f;
+        }
+
+        // Forward button
+        {
+            ImVec2 bpos = {x, cy - bhalf};
+            ImGui::SetCursorScreenPos(bpos);
+            ImGui::InvisibleButton("##navfwd",{btnSz,btnSz});
+            bool hov = ImGui::IsItemHovered();
+            bool act = ImGui::IsItemActive();
+            ImU32 bg = act  ? C_SURFACE2 :
+                       hov  ? C_SURFACE3 :
+                               COL32(255,255,255,8);
+            dl->AddRectFilled(bpos,{bpos.x+btnSz,bpos.y+btnSz},bg,4.f);
+            if(hov || act)
+                dl->AddRect(bpos,{bpos.x+btnSz,bpos.y+btnSz},C_BORDER,4.f,0,1.f);
+            ImU32 arrowCol = (hov || act) ? C_TEXT : C_TEXT_MUTED;
+            dl->AddLine({bpos.x+btnSz*.42f,cy-4.f},{bpos.x+btnSz*.62f,cy},arrowCol,1.5f);
+            dl->AddLine({bpos.x+btnSz*.62f,cy},{bpos.x+btnSz*.42f,cy+4.f},arrowCol,1.5f);
+            x += btnSz + 8.f;
+        }
     }
 
+    // ── Nav links ─────────────────────────────────────────────
     {
         const char* navs[]={"Home","Trending","Library","History"};
         for(int i=0;i<4;i++){
@@ -619,6 +670,7 @@ static void DrawTitlebar(ImDrawList* dl,ImVec2 pos,float w)
         }
     }
 
+    // ── Search bar + settings ─────────────────────────────────
     float rightPad=12.f, settingsSz=28.f, searchW=160.f, searchH=26.f;
     float searchX=pos.x+w-rightPad-settingsSz-4.f-searchW;
     float searchY=cy-searchH*.5f;
@@ -659,11 +711,8 @@ static void DrawVideoArea(ImDrawList* dl,ImVec2 pos,float w,float h)
 //   [22.. 36]   time labels row     (rendered at seekY+seekH+2)
 //   [36.. 62]   buttons / volume / quality row  (cy at bar_top+47)
 //
-// FIX: DrawControls now passes its own `dl` into SeekBar and
-// VolBar instead of letting those functions call
-// ImGui::GetWindowDrawList() themselves. Mixing draw lists
-// caused the seek / volume rails to render out of order or
-// be invisible on some Windows XP/Vista D3D9 drivers.
+// FIX: SeekBar now has 6px horizontal padding so the thumb is
+//      never clipped at the extremes (see SeekBar above).
 static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
 {
     const float h      = 62.f;
@@ -674,7 +723,6 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
     dl->AddLine(pos,{pos.x+w,pos.y},C_BORDER,1.f);
 
     // ── Seek rail ─────────────────────────────────────────────
-    // Pass dl (caller's draw list) — not GetWindowDrawList()
     SeekBar(dl,{pos.x,seekY},w,seekH,&g_seek,0.42f,
         COL32(255,255,255,25),COL32(78,168,168,60),C_ACCENT,C_TEXT);
 
@@ -731,7 +779,7 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
         x+=bsz+4.f;
     }
 
-    // Volume icon + slider — pass dl
+    // Volume icon + slider
     {
         const float iconW = 22.f;
         IconVolume(dl,{x+iconW*.5f,cy},9.f,C_TEXT_MUTED);
