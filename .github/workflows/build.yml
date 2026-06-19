@@ -108,7 +108,19 @@ jobs:
           [System.IO.File]::WriteAllLines('src/logo_data.h', $lines)
           Write-Host "Generated src/logo_data.h ($($bytes.Length) bytes embedded)"
 
-      # ── 6. Build ────────────────────────────────────────────
+      # ── 6. Compile icon resource (.rc -> .o) ───────────────
+      - name: Compile icon resource with windres
+        shell: msys2 {0}
+        run: |
+          if [ -f src/sightline.rc ] && [ -f src/favicon.ico ]; then
+            windres src/sightline.rc --include-dir src -o sightline_res.o
+            echo "windres OK — icon resource compiled"
+          else
+            echo "WARNING: sightline.rc or favicon.ico missing — skipping icon"
+            touch sightline_res_missing
+          fi
+
+      # ── 7. Build ────────────────────────────────────────────
       - name: Build SightlinePlayer.exe
         shell: msys2 {0}
         run: |
@@ -127,17 +139,18 @@ jobs:
           INC="-Isrc -I$IMGUI -I$IMGUI/backends"
           DEFS="-DWINVER=0x0501 -D_WIN32_WINNT=0x0501 -DWIN32_LEAN_AND_MEAN"
           FLAGS="-m32 -O2 -mwindows -static -static-libgcc -static-libstdc++"
-          # uuid:     WIC GUIDs (IID_IWICImagingFactory, CLSID_WICImagingFactory, etc.)
-          # ole32:    CoCreateInstance / CoInitializeEx
-          # d3d9:     Direct3D 9
-          # dwmapi:   DWM (ImGui Win32 backend)
           LIBS="-ld3d9 -ldwmapi -luser32 -lgdi32 -lgdiplus -lshell32 -lole32 -loleaut32 -luuid"
 
-          g++ $FLAGS $DEFS $INC $SRC -o SightlinePlayer.exe $LIBS
+          # Link icon resource if it was compiled successfully
+          if [ -f sightline_res.o ]; then
+            g++ $FLAGS $DEFS $INC $SRC sightline_res.o -o SightlinePlayer.exe $LIBS
+            echo "Build OK with icon — $(du -h SightlinePlayer.exe)"
+          else
+            g++ $FLAGS $DEFS $INC $SRC -o SightlinePlayer.exe $LIBS
+            echo "Build OK without icon — $(du -h SightlinePlayer.exe)"
+          fi
 
-          echo "Build OK — $(du -h SightlinePlayer.exe)"
-
-      # ── 7. Upload artifact ──────────────────────────────────
+      # ── 8. Upload artifact ──────────────────────────────────
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
