@@ -615,8 +615,17 @@ static void DrawVideoArea(ImDrawList* dl,ImVec2 pos,float w,float h)
 // ─── controls bar ────────────────────────────────────────────
 static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
 {
-    // h=76 gives enough vertical room so the time labels (at seekY+seekH+2)
-    // never overlap the button row below them.
+    // FIX: h increased from 62 → 76.
+    // Layout breakdown (all offsets relative to pos.y):
+    //   seekY  =  8  (top of seek rail hit-area)
+    //   seekH  = 14  (height of seek rail hit-area)
+    //   timeY  = 24  (time labels: seekY + seekH + 2)
+    //   text h ≈ 13  → text bottom ≈ 37
+    //   gap    =  7  (breathing room before button top)
+    //   btnTop = 44  (cy - bhalf = 58 - 14 = 44)
+    //   btnBot = 72  (cy + bhalf = 58 + 14 = 72)
+    //   bar h  = 76  (4px margin below buttons)
+    // Previously h=62 / cy=47 put btnTop at 33, colliding with text at 37.
     const float h      = 76.f;
     const float seekH  = 14.f;
     const float seekY  = pos.y + 8.f;
@@ -629,8 +638,9 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
         COL32(255,255,255,25),COL32(78,168,168,60),C_ACCENT,C_TEXT);
 
     // ── Time labels ───────────────────────────────────────────
-    // timeY = seekY + seekH + 2 = 8 + 14 + 2 = 24  (relative to pos.y)
-    // Button row cy = pos.y + 58, buttons span [44 .. 72] — no overlap.
+    // timeY = seekY + seekH + 2 = pos.y + 24.
+    // Button row cy = pos.y + 58; button top = cy - 14 = pos.y + 44.
+    // Gap between label bottom (~pos.y+37) and button top (pos.y+44) = 7px — no overlap.
     {
         const float timeY = seekY + seekH + 2.f;
         int totalSec=600, curSec=(int)(g_seek*totalSec);
@@ -644,8 +654,9 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
     }
 
     // ── Button row ───────────────────────────────────────────
-    // cy raised to pos.y+58 so buttons sit in the lower portion
-    // of the taller bar, well clear of the time labels above.
+    // FIX: cy raised from pos.y+47 to pos.y+58.
+    // Buttons now sit fully in the lower half of the taller bar,
+    // with a clear 7px gap below the time labels above them.
     const float cy = pos.y + 58.f;
     float x = pos.x + 12.f;
 
@@ -706,7 +717,8 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
     float rx=pos.x+w-12.f;
 
     // Fullscreen  (icon font: expand)
-    // IconBtn now takes dl so hover rect goes into the same draw list.
+    // FIX: IconBtn uses the dl passed in — hover rect goes into the
+    // same draw list, fixing z-order bugs with the seek/vol widgets.
     rx-=26.f;
     if(IconBtn(dl,"##fs",{rx,cy-13.f},26.f)){}
     IcoTxt(dl, {rx+13.f, cy}, 13.f, C_TEXT_MUTED, ICO_EXPAND);
@@ -969,6 +981,7 @@ static void RenderFrame()
 
     ImDrawList* dl=ImGui::GetWindowDrawList();
 
+    // FIX: CTRL_H updated from 62 → 76 to match DrawControls.
     const float TB_H  =38.f, SB_H=22.f, CTRL_H=76.f, ACT_H=46.f;
     const float SIDE_W=300.f, MAIN_W=sw-SIDE_W;
 
@@ -1025,14 +1038,10 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int)
     style.FramePadding={4,4}; style.ItemSpacing={6,4};
 
     // ── Backend init ──────────────────────────────────────────
-    // MUST be called after ImGui::CreateContext() and before any
-    // ImGui_ImplDX9_NewFrame() / ImGui_ImplWin32_NewFrame() call.
     ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplDX9_Init(g_pd3dDev);
 
     // ── Font loading ──────────────────────────────────────────
-    // Step 1: Electrolize (body text) — loaded first so it becomes
-    //         the atlas default and is used by all Txt() / Txt16() calls.
     ImFontConfig cfg;
     cfg.OversampleH=2; cfg.OversampleV=2;
     if(HasElectrolize()){
@@ -1052,17 +1061,14 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int)
     if(!g_font13) g_font13=io.Fonts->AddFontDefault();
     if(!g_font16) g_font16=g_font13;
 
-    // Step 2: Font Awesome 6 Solid (icons only) — loaded as a
-    //         separate atlas entry covering only the PUA block.
-    //         FontDataOwnedByAtlas=false so the stub/real array
-    //         is not freed by ImGui.
     if(HasIconFont()){
         ImFontConfig icoCfg;
         icoCfg.OversampleH          = 2;
         icoCfg.OversampleV          = 2;
         icoCfg.FontDataOwnedByAtlas = false;
-        icoCfg.GlyphMinAdvanceX     = 13.f;  // keep icons monospaced
+        icoCfg.GlyphMinAdvanceX     = 13.f;
         memcpy(icoCfg.Name,"FA6Solid",sizeof(icoCfg.Name));
+        icoCfg.MergeMode            = false;
         g_fontIco = io.Fonts->AddFontFromMemoryTTF(
             const_cast<unsigned char*>(fa6_solid_ttf),
             (int)fa6_solid_ttf_len,
@@ -1070,24 +1076,20 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int)
     }
 
     io.Fonts->Build();
-    io.FontDefault = g_font13;   // text font stays default — never the icon font
+    ImGui_ImplDX9_CreateDeviceObjects();
 
-    // ── Logo texture ──────────────────────────────────────────
     if(HasLogo()){
         LoadPNGFromMemory(sightline_logo_png, sightline_logo_png_len,
                           g_pd3dDev, &g_logoTex, &g_logoTexW, &g_logoTexH);
     }
 
-    MSG msg; ZeroMemory(&msg,sizeof(msg));
+    MSG msg={};
     while(msg.message!=WM_QUIT){
         if(PeekMessageA(&msg,NULL,0,0,PM_REMOVE)){
-            TranslateMessage(&msg); DispatchMessageA(&msg); continue;
+            TranslateMessage(&msg);
+            DispatchMessageA(&msg);
+            continue;
         }
-
-        HRESULT hr=g_pd3dDev->TestCooperativeLevel();
-        if(hr==D3DERR_DEVICELOST){ Sleep(10); continue; }
-        if(hr==D3DERR_DEVICENOTRESET){ ResetDevice(); continue; }
-
         ImGui_ImplDX9_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
@@ -1095,6 +1097,9 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int)
         RenderFrame();
 
         ImGui::EndFrame();
+        g_pd3dDev->SetRenderState(D3DRS_ZENABLE,FALSE);
+        g_pd3dDev->SetRenderState(D3DRS_ALPHABLENDENABLE,FALSE);
+        g_pd3dDev->SetRenderState(D3DRS_SCISSORTESTENABLE,FALSE);
         g_pd3dDev->Clear(0,NULL,D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER,
             D3DCOLOR_RGBA(12,16,20,255),1.f,0);
         if(g_pd3dDev->BeginScene()==D3D_OK){
@@ -1102,7 +1107,8 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int)
             ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
             g_pd3dDev->EndScene();
         }
-        g_pd3dDev->Present(NULL,NULL,NULL,NULL);
+        HRESULT hr=g_pd3dDev->Present(NULL,NULL,NULL,NULL);
+        if(hr==D3DERR_DEVICELOST || hr==D3DERR_DEVICENOTRESET) ResetDevice();
     }
 
     ImGui_ImplDX9_Shutdown();
