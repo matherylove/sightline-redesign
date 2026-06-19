@@ -47,13 +47,13 @@ jobs:
           Rename-Item imgui-1.90.9 imgui
 
       # ── 4. Download Electrolize font and generate header ────
-      # Electrolize is licensed under the SIL Open Font License 1.1
-      # and can be freely embedded in compiled binaries.
-      # Source: https://fonts.google.com/specimen/Electrolize
+      # Source: https://github.com/google/fonts (OFL 1.1 — free to embed)
+      # Using the raw GitHub URL from the google/fonts repo, which is always
+      # up-to-date and avoids the versioned fonts.gstatic.com URLs going stale.
       - name: Download Electrolize-Regular.ttf
         shell: pwsh
         run: |
-          $url = 'https://fonts.gstatic.com/s/electrolize/v18/cIf5Ma1dtE0zesiTbQ5Hx3N3MXT3.ttf'
+          $url = 'https://github.com/google/fonts/raw/main/ofl/electrolize/Electrolize-Regular.ttf'
           Invoke-WebRequest -Uri $url -OutFile 'Electrolize-Regular.ttf'
           Write-Host "Downloaded: $((Get-Item 'Electrolize-Regular.ttf').Length) bytes"
 
