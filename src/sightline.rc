@@ -1,9 +1,8 @@
-// sightline.rc — application icon resource
-// Compiled by windres; linked into SightlinePlayer.exe.
-// favicon.ico must exist at src/favicon.ico relative to project root.
-// Resource ID 1 is read at runtime by WinMain via LoadImageA(hInst,
-// MAKEINTRESOURCEA(1), IMAGE_ICON, ...) — works on XP SP3 x86 through Win11.
+// sightline.rc - application icon resource
+// windres is called with --include-dir src so "favicon.ico" resolves to src/favicon.ico
+// Resource ID 1 is loaded at runtime by WinMain via LoadImageA(hInst, MAKEINTRESOURCEA(1), ...)
+// Compatible: XP SP3 x86 through Windows 11 x64
 
 #include <windows.h>
 
-1 ICON "src/favicon.ico"
+1 ICON "favicon.ico"
