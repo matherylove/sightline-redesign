@@ -203,7 +203,8 @@ static LRESULT WINAPI WndProc(HWND hWnd,UINT msg,WPARAM wParam,LPARAM lParam)
 // ─── helpers ─────────────────────────────────────────────────
 static void RectFill(ImDrawList* dl,ImVec2 p,ImVec2 sz,ImU32 c,float r=0.f)
 { dl->AddRectFilled(p,{p.x+sz.x,p.y+sz.y},c,r); }
-static void Rect(ImDrawList* dl,ImVec2 p,ImVec2 sz,ImU32 c,float r=0.f,float t=1.f)
+// Renamed from Rect() to DrawRect() to avoid ambiguity with Gdiplus::Rect
+static void DrawRect(ImDrawList* dl,ImVec2 p,ImVec2 sz,ImU32 c,float r=0.f,float t=1.f)
 { dl->AddRect(p,{p.x+sz.x,p.y+sz.y},c,r,0,t); }
 
 static void Txt(ImDrawList* dl,ImVec2 p,ImU32 c,const char* s,float wrap=0.f)
@@ -591,7 +592,7 @@ static void DrawTitlebar(ImDrawList* dl, ImVec2 pos, float w)
     float searchY   = cy - searchH * .5f;
 
     RectFill(dl, {searchX, searchY}, {searchW, searchH}, C_SURFACE3, 5.f);
-    Rect(dl, {searchX, searchY}, {searchW, searchH}, C_BORDER, 5.f);
+    DrawRect(dl, {searchX, searchY}, {searchW, searchH}, C_BORDER, 5.f);
 
     ImVec2 pt = TS(g_search);
     Txt(dl,{searchX + 8.f, searchY + (searchH - pt.y) * .5f},C_TEXT_FAINT,g_search);
@@ -714,7 +715,7 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
     // Quality selector
     rx -= 58.f;
     RectFill(wdl,{rx, cy-11.f},{52.f,22.f},C_SURFACE2,5.f);
-    Rect(wdl,{rx, cy-11.f},{52.f,22.f},C_BORDER,5.f);
+    DrawRect(wdl,{rx, cy-11.f},{52.f,22.f},C_BORDER,5.f);
     ImGui::SetCursorScreenPos({rx, cy-11.f});
     ImGui::InvisibleButton("##qual",{52.f,22.f});
     if(ImGui::IsItemClicked()) g_quality = (g_quality+1) % g_qualityCount;
