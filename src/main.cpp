@@ -558,22 +558,19 @@ static void DrawTitlebar(ImDrawList* dl,ImVec2 pos,float w)
     float cy=pos.y+h*.5f;
     float x =pos.x+8.f;
 
+    // ── Logo only (no text label) ────────────────────────────
     float logoAreaH = h - 8.f;
     float logoAreaY = pos.y + 4.f;
     DrawLogoArea(dl, {x, logoAreaY}, logoAreaH);
     if(g_logoTex && g_logoTexH > 0){
         float scale = logoAreaH / (float)g_logoTexH;
-        x += (float)g_logoTexW * scale + 8.f;
+        x += (float)g_logoTexW * scale + 12.f;
     } else {
-        x += logoAreaH + 8.f;
+        // vector fallback circle width
+        x += logoAreaH + 12.f;
     }
-
-    const char* part1="SIGHT", *part2="LINE";
-    float fontY=cy-TS(part1).y*.5f;
-    ImVec2 s1=TS(part1);
-    Txt(dl,{x,fontY},C_TEXT,part1);
-    Txt(dl,{x+s1.x,fontY},C_ACCENT,part2);
-    x+=s1.x+TS(part2).x+10.f;
+    // NOTE: 'SIGHTLINE' text has been intentionally removed.
+    // Only the texture logo (or its vector fallback) is shown.
 
     {
         float btnSz=28.f, by=cy-btnSz*.5f;
@@ -642,28 +639,41 @@ static void DrawVideoArea(ImDrawList* dl,ImVec2 pos,float w,float h)
 }
 
 // ─── controls bar ────────────────────────────────────────────
+// Layout (top→bottom inside the 62px bar):
+//   [0..8]    top padding
+//   [8..22]   seek rail hit area (14px tall, centred on y=15)
+//   [22..30]  gap
+//   [30..46]  time labels row  (cy = 36 from bar top)
+//   [36..62]  buttons / volume / quality row  (cy = 49 from bar top)
+//
+// This keeps the seek rail cleanly inside the bar and
+// prevents it from bleeding into or overlapping the video area.
 static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
 {
-    const float h     = 52.f;
-    const float seekH = 14.f;
-    const float seekY = pos.y + 4.f;
+    const float h      = 62.f;   // bar height (was 52)
+    const float seekH  = 14.f;   // hit-area height for the seek rail
+    const float seekY  = pos.y + 8.f;  // 8px top padding before rail
 
     RectFill(dl,pos,{w,h},C_SURFACE);
     dl->AddLine(pos,{pos.x+w,pos.y},C_BORDER,1.f);
 
+    // ── Seek rail ─────────────────────────────────────────────
     SeekBar(ImGui::GetWindowDrawList(),{pos.x,seekY},w,seekH,&g_seek,0.42f,
         COL32(255,255,255,25),COL32(78,168,168,60),C_ACCENT,C_TEXT);
 
+    // ── Time labels ───────────────────────────────────────────
     {
+        const float timeY = seekY + seekH + 2.f;  // just below the rail
         int totalSec=600, curSec=(int)(g_seek*totalSec);
         char cur[16]; snprintf(cur,sizeof(cur),"%d:%02d",curSec/60,curSec%60);
         const char* tot="10:00";
-        Txt(dl,{pos.x+4.f,seekY+seekH+1.f},C_TEXT_FAINT,cur);
+        Txt(dl,{pos.x+4.f, timeY},C_TEXT_FAINT,cur);
         ImVec2 ts2=TS(tot);
-        Txt(dl,{pos.x+w-ts2.x-4.f,seekY+seekH+1.f},C_TEXT_FAINT,tot);
+        Txt(dl,{pos.x+w-ts2.x-4.f, timeY},C_TEXT_FAINT,tot);
     }
 
-    const float cy = pos.y + 35.f;
+    // ── Button / control row ─────────────────────────────────
+    const float cy = pos.y + h - 16.f;  // vertically centred in lower half
     float x = pos.x + 12.f;
 
     ImDrawList* wdl = ImGui::GetWindowDrawList();
@@ -712,10 +722,12 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
 
     float rx=pos.x+w-12.f;
 
+    // Fullscreen
     rx-=30.f;
     if(IconBtn("##fs",{rx,cy-13.f},26.f)){}
     IconFullscreen(wdl,{rx+13.f,cy},9.f,C_TEXT_MUTED);
 
+    // Quality selector
     rx-=58.f;
     RectFill(wdl,{rx,cy-11.f},{52.f,22.f},C_SURFACE2,5.f);
     Rect(wdl,{rx,cy-11.f},{52.f,22.f},C_BORDER,5.f);
@@ -962,7 +974,7 @@ static void RenderFrame()
 
     ImDrawList* dl=ImGui::GetWindowDrawList();
 
-    const float TB_H  =38.f, SB_H=22.f, CTRL_H=52.f, ACT_H=46.f;
+    const float TB_H  =38.f, SB_H=22.f, CTRL_H=62.f, ACT_H=46.f;  // CTRL_H updated to 62
     const float SIDE_W=300.f, MAIN_W=sw-SIDE_W;
 
     float contentH=sh-TB_H-SB_H;
