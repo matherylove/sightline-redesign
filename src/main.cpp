@@ -15,18 +15,13 @@
 #include "imgui_impl_dx9.h"
 
 // ── Embedded font ──────────────────────────────────────────────
-// font_electrolize.h is auto-generated at build time by the CI workflow
-// using: xxd -i Electrolize-Regular.ttf
-// It defines:  const unsigned char electrolize_regular_ttf[];
-//              const unsigned int  electrolize_regular_ttf_len;
-// If the header is not present, both font handles fall back to
-// ImGui's built-in Proggy Clean (AddFontDefault).
-// Electrolize is licensed under SIL OFL 1.1 — free to embed.
+// font_electrolize.h is auto-generated at build time by the CI workflow.
+// If missing, falls back to ImGui's built-in Proggy Clean.
 #if __has_include("font_electrolize.h")
   #include "font_electrolize.h"
   #define HAS_ELECTROLIZE_EMBED (electrolize_regular_ttf_len > 4)
 #else
-  static const unsigned char electrolize_regular_ttf[]  = { 0 };
+  static const unsigned char electrolize_regular_ttf[]   = { 0 };
   static const unsigned int  electrolize_regular_ttf_len = 0;
   #define HAS_ELECTROLIZE_EMBED 0
 #endif
@@ -74,6 +69,11 @@ static const ImWchar g_glyph_ranges[] = {
 // ─── font handles ────────────────────────────────────────────
 static ImFont* g_font13 = nullptr;
 static ImFont* g_font16 = nullptr;
+
+// ─── logo texture ────────────────────────────────────────────
+static LPDIRECT3DTEXTURE9 g_logoTex    = NULL;
+static int                g_logoW      = 0;
+static int                g_logoH      = 0;
 
 // ─── app state ───────────────────────────────────────────────
 static float  g_seek       = 0.175f;
@@ -126,6 +126,7 @@ static bool CreateDeviceD3D(HWND hWnd)
 }
 static void CleanupDevice()
 {
+    if(g_logoTex){ g_logoTex->Release(); g_logoTex=NULL; }
     if(g_pd3dDev){ g_pd3dDev->Release(); g_pd3dDev=NULL; }
     if(g_pD3D)   { g_pD3D->Release();    g_pD3D=NULL;    }
 }
@@ -134,6 +135,52 @@ static void ResetDevice()
     ImGui_ImplDX9_InvalidateDeviceObjects();
     g_pd3dDev->Reset(&g_d3dpp);
     ImGui_ImplDX9_CreateDeviceObjects();
+}
+
+// ─── PNG loader (GDI+, XP compat) ───────────────────────────
+// Loads a PNG file from disk into a DX9 texture using GDI+.
+// GDI+ ships with Windows XP SP2+ so no extra DLL needed.
+#include <objidl.h>
+#include <gdiplus.h>
+#pragma comment(lib,"gdiplus.lib")
+using namespace Gdiplus;
+
+static bool LoadLogoTexture(LPDIRECT3DDEVICE9 dev, const char* path)
+{
+    // Convert path to wchar
+    wchar_t wpath[MAX_PATH];
+    MultiByteToWideChar(CP_ACP,0,path,-1,wpath,MAX_PATH);
+
+    Bitmap* bmp = Bitmap::FromFile(wpath);
+    if(!bmp || bmp->GetLastStatus() != Ok){ delete bmp; return false; }
+
+    UINT w = bmp->GetWidth();
+    UINT h = bmp->GetHeight();
+    if(w == 0 || h == 0){ delete bmp; return false; }
+
+    LPDIRECT3DTEXTURE9 tex = NULL;
+    if(FAILED(dev->CreateTexture(w, h, 1, 0, D3DFMT_A8R8G8B8,
+        D3DPOOL_MANAGED, &tex, NULL))){ delete bmp; return false; }
+
+    D3DLOCKED_RECT lr;
+    if(FAILED(tex->LockRect(0, &lr, NULL, 0))){ tex->Release(); delete bmp; return false; }
+
+    for(UINT y = 0; y < h; y++){
+        DWORD* row = (DWORD*)((BYTE*)lr.pBits + y * lr.Pitch);
+        for(UINT x = 0; x < w; x++){
+            Color c;
+            bmp->GetPixel((INT)x,(INT)y,&c);
+            // GDI+ ARGB -> D3D ARGB same layout
+            row[x] = c.GetValue();
+        }
+    }
+    tex->UnlockRect(0);
+    delete bmp;
+
+    g_logoTex = tex;
+    g_logoW   = (int)w;
+    g_logoH   = (int)h;
+    return true;
 }
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND,UINT,WPARAM,LPARAM);
@@ -208,9 +255,7 @@ static void IconVolume(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
     dl->PathLineTo({c.x-r*.12f,c.y+hh});
     dl->PathFillConvex(col);
     float cx2 = c.x + r * .15f;
-    float cy2 = c.y;
-    float rc   = r * .55f;
-    dl->PathArcTo({cx2, cy2}, rc, -3.14f * .4f, 3.14f * .4f, 8);
+    dl->PathArcTo({cx2, c.y}, r*.55f, -3.14f*.4f, 3.14f*.4f, 8);
     dl->PathStroke(col, false, 1.2f);
 }
 static void IconFullscreen(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
@@ -262,29 +307,6 @@ static void IconThumbDown(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
     for(int i=0;i<6;i++) dl->PathLineTo(pts[i]);
     dl->PathStroke(col,true,1.3f);
     dl->AddRectFilled({c.x-hw,c.y-hh},{c.x-hw+r*.22f,c.y-hh*.1f},col,1.f);
-}
-
-static void DrawLogo(ImDrawList* dl, ImVec2 center, float scale, ImU32 col)
-{
-    float s = scale / 9.f;
-    dl->AddCircle(center, 9.f*s, col, 0, 1.5f);
-    {
-        float r5 = 5.f*s;
-        int   num_dashes = 8;
-        float dash_angle = 3.14159f * 2.f / (float)(num_dashes * 2);
-        for(int i = 0; i < num_dashes; i++){
-            float a0 = (float)i * 2.f * dash_angle;
-            float a1 = a0 + dash_angle * 0.85f;
-            dl->PathArcTo(center, r5, a0, a1, 4);
-            dl->PathStroke(col, false, 1.0f);
-        }
-    }
-    dl->AddCircleFilled(center, 2.f*s, col);
-    float lw = 1.5f;
-    dl->AddLine({center.x, center.y - 9.f*s}, {center.x, center.y - 7.f*s}, col, lw);
-    dl->AddLine({center.x, center.y + 7.f*s}, {center.x, center.y + 9.f*s}, col, lw);
-    dl->AddLine({center.x - 9.f*s, center.y}, {center.x - 7.f*s, center.y}, col, lw);
-    dl->AddLine({center.x + 7.f*s, center.y}, {center.x + 9.f*s, center.y}, col, lw);
 }
 
 static void IconSkip(ImDrawList* dl,ImVec2 c,float r,ImU32 col,bool forward)
@@ -423,6 +445,9 @@ static void DrawNowPlayingCard(ImDrawList* dl, ImVec2 pos, float w)
     float iw  = w - padL - thumbW - 8.f - padR;
     float iy  = pos.y + padT;
 
+    // Clip text inside info column
+    dl->PushClipRect({ix, pos.y}, {pos.x+w-padR, pos.y+cardH}, true);
+
     const char* badge = "NOW PLAYING";
     ImVec2 bsz = TS(badge);
     Txt(dl,{ix, iy},C_ACCENT,badge);
@@ -430,9 +455,14 @@ static void DrawNowPlayingCard(ImDrawList* dl, ImVec2 pos, float w)
 
     Txt(dl,{ix, iy},C_TEXT,g_related[0].title,iw);
     ImVec2 tsz = TS(g_related[0].title, iw);
-    iy += tsz.y + 4.f;
+    // Cap title to 2 lines
+    float titleH = tsz.y;
+    if(titleH > 13.f*2.f+4.f) titleH = 13.f*2.f+4.f;
+    iy += titleH + 4.f;
 
     Txt(dl,{ix, iy},C_TEXT_FAINT,g_related[0].channel);
+
+    dl->PopClipRect();
 }
 
 // ─── related item ────────────────────────────────────────────
@@ -456,17 +486,21 @@ static void DrawRelatedItem(ImDrawList* dl, ImVec2 pos, float w, const RelItem& 
     float iw = w - padL - thumbW - 8.f - padR;
     float iy = pos.y + padT;
 
+    // Clip text to info column so it never overflows the sidebar
+    dl->PushClipRect({ix, pos.y}, {pos.x + w - padR, pos.y + itemH}, true);
+
     Txt(dl,{ix, iy},C_TEXT,item.title,iw);
     ImVec2 titSz = TS(item.title, iw);
-    float titleH = titSz.y;
-    float maxTitleH = 13.f * 2.f + 4.f;
-    if(titleH > maxTitleH) titleH = maxTitleH;
-    iy += titleH + 4.f;
+    float titleH2 = titSz.y;
+    if(titleH2 > 13.f*2.f+4.f) titleH2 = 13.f*2.f+4.f;
+    iy += titleH2 + 4.f;
 
     Txt(dl,{ix, iy},C_TEXT_MUTED,item.channel);
     ImVec2 chSz = TS(item.channel);
     iy += chSz.y + 2.f;
     Txt(dl,{ix, iy},C_TEXT_FAINT,item.views);
+
+    dl->PopClipRect();
 
     dl->AddLine({pos.x+padL, pos.y+itemH-1.f}, {pos.x+w-padR, pos.y+itemH-1.f}, C_BORDER, 1.f);
 }
@@ -481,10 +515,27 @@ static void DrawTitlebar(ImDrawList* dl, ImVec2 pos, float w)
     float cy = pos.y + h * .5f;
     float x  = pos.x + 12.f;
 
-    float logoR = 9.f;
-    ImVec2 logoC = {x + logoR + 1.f, cy};
-    DrawLogo(dl, logoC, logoR, C_ACCENT);
-    x += logoR * 2.f + 8.f;
+    // ── Logo: sprite PNG if loaded, else text fallback ────────
+    const float logoAreaW = 28.f;
+    const float logoAreaH = 28.f;
+    if(g_logoTex){
+        // Draw sprite scaled to fit 28x28 area, centered
+        float aspect = (float)g_logoW / (float)g_logoH;
+        float dw, dh;
+        if(aspect >= 1.f){ dw = logoAreaW; dh = logoAreaW / aspect; }
+        else             { dh = logoAreaH; dw = logoAreaH * aspect; }
+        float lx = x + (logoAreaW - dw) * .5f;
+        float ly = cy - dh * .5f;
+        dl->AddImage((ImTextureID)(intptr_t)g_logoTex,
+            {lx, ly}, {lx+dw, ly+dh});
+    } else {
+        // Fallback: simple circle with inner dot
+        ImVec2 lc = {x + logoAreaW*.5f, cy};
+        float  lr = 9.f;
+        dl->AddCircle(lc, lr, C_ACCENT, 0, 1.5f);
+        dl->AddCircleFilled(lc, 2.5f, C_ACCENT);
+    }
+    x += logoAreaW + 8.f;
 
     const char* part1 = "SIGHT";
     const char* part2 = "LINE";
@@ -533,11 +584,11 @@ static void DrawTitlebar(ImDrawList* dl, ImVec2 pos, float w)
         }
     }
 
-    float rightPad = 12.f;
-    float settingsSz = 28.f;
-    float searchW = 160.f, searchH = 26.f;
-    float searchX = pos.x + w - rightPad - settingsSz - 4.f - searchW;
-    float searchY = cy - searchH * .5f;
+    float rightPad  = 12.f;
+    float settingsSz= 28.f;
+    float searchW   = 160.f, searchH = 26.f;
+    float searchX   = pos.x + w - rightPad - settingsSz - 4.f - searchW;
+    float searchY   = cy - searchH * .5f;
 
     RectFill(dl, {searchX, searchY}, {searchW, searchH}, C_SURFACE3, 5.f);
     Rect(dl, {searchX, searchY}, {searchW, searchH}, C_BORDER, 5.f);
@@ -575,79 +626,99 @@ static void DrawVideoArea(ImDrawList* dl,ImVec2 pos,float w,float h)
 // ─── controls bar ────────────────────────────────────────────
 static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
 {
-    float h=52.f;
+    const float h       = 52.f;
+    const float seekH   = 16.f;   // seek bar hit area
+    const float seekY   = pos.y + 2.f;
+    // Controls row: vertically centred in the space below the seekbar
+    const float ctrlTop = seekY + seekH;
+    const float ctrlBot = pos.y + h;
+    const float cy      = ctrlTop + (ctrlBot - ctrlTop) * .5f;
+
     RectFill(dl,pos,{w,h},C_SURFACE);
     dl->AddLine(pos,{pos.x+w,pos.y},C_BORDER,1.f);
 
-    {
-        ImDrawList* sdl=ImGui::GetWindowDrawList();
-        SeekBar(sdl,{pos.x,pos.y+2.f},w,16.f,&g_seek,0.42f,
-            COL32(255,255,255,25),
-            COL32(78,168,168,60),
-            C_ACCENT,
-            C_TEXT);
-    }
+    SeekBar(ImGui::GetWindowDrawList(),{pos.x,seekY},w,seekH,&g_seek,0.42f,
+        COL32(255,255,255,25),
+        COL32(78,168,168,60),
+        C_ACCENT,
+        C_TEXT);
 
+    // Timestamps
     {
         int totalSec=600;
         int curSec=(int)(g_seek*totalSec);
-        char cur[16]; snprintf(cur, sizeof(cur), "%d:%02d", curSec/60, curSec%60);
+        char cur[16]; snprintf(cur,sizeof(cur),"%d:%02d",curSec/60,curSec%60);
         const char* tot="10:00";
         ImVec2 timeSz = TS(cur);
-        Txt(dl,{pos.x+4.f, pos.y+18.f},C_TEXT_FAINT,cur);
+        Txt(dl,{pos.x+4.f, ctrlTop + 2.f},C_TEXT_FAINT,cur);
         ImVec2 ts2 = TS(tot);
-        Txt(dl,{pos.x+w-ts2.x-4.f, pos.y+18.f},C_TEXT_FAINT,tot);
+        Txt(dl,{pos.x+w-ts2.x-4.f, ctrlTop + 2.f},C_TEXT_FAINT,tot);
     }
 
-    float cy = pos.y + 22.f + 15.f;
-    float x  = pos.x + 12.f;
+    ImDrawList* wdl = ImGui::GetWindowDrawList();
+    float x = pos.x + 12.f;
+    const float btnSz = 34.f;
+    const float half  = btnSz * .5f;
 
-    ImDrawList* wdl=ImGui::GetWindowDrawList();
-
+    // Play / Pause button
     {
-        float btnSz = 34.f;
-        ImGui::SetCursorScreenPos({x, cy-btnSz*.5f});
+        float bx = x, by = cy - half;
+        ImGui::SetCursorScreenPos({bx, by});
         ImGui::InvisibleButton("##pp",{btnSz,btnSz});
         bool hov = ImGui::IsItemHovered();
-        if(ImGui::IsItemClicked()) g_playing=!g_playing;
+        if(ImGui::IsItemClicked()) g_playing = !g_playing;
         ImU32 bg = hov ? C_SURFACE3 : C_SURFACE2;
-        wdl->AddRectFilled({x,cy-btnSz*.5f},{x+btnSz,cy+btnSz*.5f},bg,6.f);
-        wdl->AddRect({x,cy-btnSz*.5f},{x+btnSz,cy+btnSz*.5f},hov?C_BORDER_STR:C_BORDER,6.f,0,1.f);
-        if(g_playing) IconPause(wdl,{x+btnSz*.5f,cy},9.f,C_TEXT);
-        else          IconPlay (wdl,{x+btnSz*.5f,cy},9.f,C_TEXT);
-        x+=btnSz+4.f;
+        wdl->AddRectFilled({bx,by},{bx+btnSz,by+btnSz},bg,6.f);
+        wdl->AddRect({bx,by},{bx+btnSz,by+btnSz},hov?C_BORDER_STR:C_BORDER,6.f,0,1.f);
+        if(g_playing) IconPause(wdl,{bx+half, cy},9.f,C_TEXT);
+        else          IconPlay (wdl,{bx+half, cy},9.f,C_TEXT);
+        x += btnSz + 4.f;
     }
 
-    if(IconBtn("##m10",{x,cy-15.f},30.f)){
-        g_seek-=10.f/600.f; if(g_seek<0.f)g_seek=0.f;
+    // Skip back 10s
+    {
+        float bx = x;
+        if(IconBtn("##m10",{bx, cy-15.f},30.f)){
+            g_seek -= 10.f/600.f;
+            if(g_seek < 0.f) g_seek = 0.f;
+        }
+        IconSkip(wdl,{bx+15.f, cy},10.f,C_TEXT_MUTED,false);
+        x += 34.f;
     }
-    IconSkip(wdl,{x+15.f,cy},10.f,C_TEXT_MUTED,false);
-    x+=34.f;
 
-    if(IconBtn("##p10",{x,cy-15.f},30.f)){
-        g_seek+=10.f/600.f; if(g_seek>1.f)g_seek=1.f;
+    // Skip forward 10s
+    {
+        float bx = x;
+        if(IconBtn("##p10",{bx, cy-15.f},30.f)){
+            g_seek += 10.f/600.f;
+            if(g_seek > 1.f) g_seek = 1.f;
+        }
+        IconSkip(wdl,{bx+15.f, cy},10.f,C_TEXT_MUTED,true);
+        x += 34.f;
     }
-    IconSkip(wdl,{x+15.f,cy},10.f,C_TEXT_MUTED,true);
-    x+=34.f;
 
-    IconVolume(wdl,{x+9.f,cy},9.f,C_TEXT_MUTED);
-    x+=20.f;
-    VolBar(wdl,{x,cy-7.f},70.f,14.f,&g_vol);
-    x+=76.f;
+    // Volume
+    IconVolume(wdl,{x+9.f, cy},9.f,C_TEXT_MUTED);
+    x += 20.f;
+    VolBar(wdl,{x, cy-7.f},70.f,14.f,&g_vol);
+    x += 76.f;
 
-    float rx=pos.x+w-12.f;
+    // Right-side controls
+    float rx = pos.x + w - 12.f;
 
-    rx-=30.f;
-    if(IconBtn("##fs",{rx,cy-13.f},26.f)){}
-    IconFullscreen(wdl,{rx+13.f,cy},9.f,C_TEXT_MUTED);
+    // Fullscreen
+    rx -= 30.f;
+    if(IconBtn("##fs",{rx, cy-13.f},26.f)){}
+    IconFullscreen(wdl,{rx+13.f, cy},9.f,C_TEXT_MUTED);
 
-    rx-=58.f;
-    RectFill(wdl,{rx,cy-11.f},{52.f,22.f},C_SURFACE2,5.f);
-    Rect(wdl,{rx,cy-11.f},{52.f,22.f},C_BORDER,5.f);
-    ImGui::SetCursorScreenPos({rx,cy-11.f});
+    // Quality selector
+    rx -= 58.f;
+    RectFill(wdl,{rx, cy-11.f},{52.f,22.f},C_SURFACE2,5.f);
+    Rect(wdl,{rx, cy-11.f},{52.f,22.f},C_BORDER,5.f);
+    ImGui::SetCursorScreenPos({rx, cy-11.f});
     ImGui::InvisibleButton("##qual",{52.f,22.f});
-    if(ImGui::IsItemClicked()) g_quality=(g_quality+1)%g_qualityCount;
-    Txt(wdl,{rx+6.f,cy-6.f},C_ACCENT,g_qualityOpts[g_quality]);
+    if(ImGui::IsItemClicked()) g_quality = (g_quality+1) % g_qualityCount;
+    Txt(wdl,{rx+6.f, cy-6.f},C_ACCENT,g_qualityOpts[g_quality]);
 }
 
 // ─── action bar ──────────────────────────────────────────────
@@ -842,6 +913,7 @@ static void DrawSidebar(ImDrawList* dl, ImVec2 pos, float w, float viewH)
 {
     float y = pos.y;
 
+    // Header bar
     RectFill(dl, {pos.x, y}, {w, 40.f}, C_SURFACE);
     dl->AddLine({pos.x, y+40.f}, {pos.x+w, y+40.f}, C_BORDER, 1.f);
 
@@ -850,6 +922,7 @@ static void DrawSidebar(ImDrawList* dl, ImVec2 pos, float w, float viewH)
     float barCY = y + 20.f;
     Txt(dl,{pos.x+12.f, barCY - unsz.y*.5f},C_TEXT_FAINT,upnext);
 
+    // Autoplay toggle
     const char* autoTxt = "Autoplay";
     ImVec2 ats = TS(autoTxt);
     float togW=32.f, togH=16.f;
@@ -862,15 +935,21 @@ static void DrawSidebar(ImDrawList* dl, ImVec2 pos, float w, float viewH)
     Txt(dl,{togX+4.f, togY+(togH-onSz.y)*.5f},C_BLACK,"ON");
     y += 40.f;
 
+    // Now-playing card
     float npH = 68.f;
     DrawNowPlayingCard(dl, {pos.x, y}, w);
     y += npH + 2.f;
 
-    float itemH = 72.f;
+    // Related items (scrollable)
+    const float itemH = 72.f;
+    // Clip the scrollable list region
+    float listTop = y;
+    float listBot = pos.y + viewH;
+    dl->PushClipRect({pos.x, listTop}, {pos.x+w, listBot}, true);
 
     for(int i = 1; i < g_relatedCount; i++){
-        float iy = y + (float)(i-1) * itemH - g_sideScroll;
-        if(iy + itemH < pos.y || iy > pos.y + viewH) continue;
+        float iy = listTop + (float)(i-1) * itemH - g_sideScroll;
+        if(iy + itemH < listTop || iy > listBot) continue;
 
         ImGui::SetCursorScreenPos({pos.x, iy});
         char relId[32]; snprintf(relId, sizeof(relId), "##rel%d", i);
@@ -881,6 +960,9 @@ static void DrawSidebar(ImDrawList* dl, ImVec2 pos, float w, float viewH)
         DrawRelatedItem(dl, {pos.x, iy}, w, g_related[i], i);
     }
 
+    dl->PopClipRect();
+
+    // Mouse wheel scroll
     ImVec2 mp = ImGui::GetIO().MousePos;
     if(mp.x >= pos.x && mp.x <= pos.x+w && mp.y >= pos.y && mp.y <= pos.y+viewH){
         float wheel = ImGui::GetIO().MouseWheel;
@@ -975,6 +1057,11 @@ static void RenderFrame()
 // ─── WinMain ─────────────────────────────────────────────────
 int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int nCmdShow)
 {
+    // Init GDI+
+    ULONG_PTR gdiplusToken;
+    GdiplusStartupInput gdiplusInput;
+    GdiplusStartup(&gdiplusToken, &gdiplusInput, NULL);
+
     WNDCLASSEXA wc={sizeof(wc)};
     wc.style=CS_CLASSDC;
     wc.lpfnWndProc=WndProc;
@@ -988,6 +1075,7 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int nCmdShow)
     if(!CreateDeviceD3D(g_hwnd)){
         CleanupDevice();
         UnregisterClassA(wc.lpszClassName,hInst);
+        GdiplusShutdown(gdiplusToken);
         return 1;
     }
 
@@ -1000,34 +1088,36 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int nCmdShow)
     io.IniFilename=NULL;
 
     // ── Font loading ──────────────────────────────────────────
-    // Primary: Electrolize embedded via font_electrolize.h (baked into EXE by CI).
-    // Fallback: ImGui built-in Proggy Clean — no external file lookups.
-
+    // Primary: Electrolize embedded via font_electrolize.h (baked at CI).
+    // Fallback: ImGui built-in Proggy Clean.
 #if HAS_ELECTROLIZE_EMBED
     {
         ImFontConfig c13;
         c13.FontDataOwnedByAtlas = false;
-        c13.GlyphRanges = g_glyph_ranges;
+        memcpy(c13.Name, "Electrolize13", 14);
         g_font13 = io.Fonts->AddFontFromMemoryTTF(
-            (void*)electrolize_regular_ttf, (int)electrolize_regular_ttf_len,
+            (void*)electrolize_regular_ttf,
+            (int)electrolize_regular_ttf_len,
             13.f, &c13, g_glyph_ranges);
 
         ImFontConfig c16;
         c16.FontDataOwnedByAtlas = false;
-        c16.GlyphRanges = g_glyph_ranges;
+        memcpy(c16.Name, "Electrolize16", 14);
         g_font16 = io.Fonts->AddFontFromMemoryTTF(
-            (void*)electrolize_regular_ttf, (int)electrolize_regular_ttf_len,
+            (void*)electrolize_regular_ttf,
+            (int)electrolize_regular_ttf_len,
             16.f, &c16, g_glyph_ranges);
     }
 #endif
 
-    // If embed unavailable or load failed, use ImGui default (Proggy Clean)
-    if(!g_font13){
+    if(!g_font13 || !g_font16){
+        // System font fallback — no file lookups, no extra DLLs
         g_font13 = io.Fonts->AddFontDefault();
         g_font16 = g_font13;
     }
 
     io.FontDefault = g_font13;
+    io.Fonts->Build();
 
     ImGui::StyleColorsDark();
     ImGuiStyle& st=ImGui::GetStyle();
@@ -1043,6 +1133,20 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int nCmdShow)
 
     ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplDX9_Init(g_pd3dDev);
+
+    // ── Logo texture ─────────────────────────────────────────
+    // Look for the PNG next to the EXE (deployed alongside it).
+    // If missing, DrawTitlebar falls back to the vector circle.
+    {
+        char exePath[MAX_PATH] = {};
+        GetModuleFileNameA(NULL, exePath, MAX_PATH);
+        // Replace filename with "Sightline Logo.png"
+        char* last = strrchr(exePath, '\\');
+        if(last) *(last+1) = '\0';
+        char logoPath[MAX_PATH];
+        snprintf(logoPath, MAX_PATH, "%sSightline Logo.png", exePath);
+        LoadLogoTexture(g_pd3dDev, logoPath);
+    }
 
     ImVec4 clearCol=U32toV4(C_BG);
     MSG msg; ZeroMemory(&msg,sizeof(msg));
@@ -1066,7 +1170,8 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int nCmdShow)
             (int)(clearCol.x*255),(int)(clearCol.y*255),
             (int)(clearCol.z*255),(int)(clearCol.w*255));
         g_pd3dDev->Clear(0,NULL,D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER,cc,1.f,0);
-        if(g_pd3dDev->BeginScene()==D3D_OK){
+        if(g_pd3dDev->BeginScene()==D3D_OK);
+        {
             ImGui::Render();
             ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
             g_pd3dDev->EndScene();
@@ -1081,5 +1186,6 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int nCmdShow)
     ImGui::DestroyContext();
     CleanupDevice();
     UnregisterClassA(wc.lpszClassName,hInst);
+    GdiplusShutdown(gdiplusToken);
     return 0;
 }
