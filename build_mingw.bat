@@ -3,9 +3,16 @@ REM ---------------------------------------------------------
 REM  Build Sightline Player - MinGW-w64 x86 (Win XP target)
 REM  Requires: MinGW-w64 i686 toolchain on PATH (includes xxd)
 REM  Run this from the project root directory
+REM
+REM  FFmpeg XP-mod:
+REM    Extract ffmpeg-7.1-*-win32-dev-xpmod-sse.7z into ffmpeg-xp\
+REM    Expected layout:
+ REM     ffmpeg-xp\include\libavformat\avformat.h  (headers)
+REM      ffmpeg-xp\lib\libavcodec.a               (static libs)
 REM ---------------------------------------------------------
 
 set IMGUI=imgui
+set FFMPEG_DIR=ffmpeg-xp
 set OUT=SightlinePlayer.exe
 set FONT_TTF=%IMGUI%\misc\fonts\ProggyVector.ttf
 set FONT_H=src\font_proggy.h
@@ -70,6 +77,7 @@ if exist "%LOGO_PNG%" (
 
 REM -- Step 2: Compile --------------------------------------
 set SRC=src\main.cpp ^
+  src\video_player.cpp ^
   %IMGUI%\imgui.cpp ^
   %IMGUI%\imgui_draw.cpp ^
   %IMGUI%\imgui_tables.cpp ^
@@ -77,15 +85,17 @@ set SRC=src\main.cpp ^
   %IMGUI%\backends\imgui_impl_win32.cpp ^
   %IMGUI%\backends\imgui_impl_dx9.cpp
 
-set INC=-Isrc -I%IMGUI% -I%IMGUI%\backends
+set INC=-Isrc -I%IMGUI% -I%IMGUI%\backends -I%FFMPEG_DIR%\include
 set DEFS=-DWINVER=0x0501 -D_WIN32_WINNT=0x0501 -DWIN32_LEAN_AND_MEAN
 set FLAGS=-m32 -O2 -mwindows -static -static-libgcc -static-libstdc++
-set LIBS=-ld3d9 -ldwmapi -luser32 -lgdi32 -lgdiplus -lshell32 -lole32 -loleaut32 -luuid
+set LIBS=-ld3d9 -ldwmapi -luser32 -lgdi32 -lgdiplus -lshell32 -lole32 -loleaut32 -luuid -lwinmm
+set LIBS=%LIBS% -lavcodec -lavformat -lavutil -lswscale -lswresample
+set LDIR=-L%FFMPEG_DIR%\lib
 
 if "%RC_OBJ%"=="" (
-    g++ %FLAGS% %DEFS% %INC% %SRC% -o %OUT% %LIBS%
+    g++ %FLAGS% %DEFS% %INC% %SRC% %LDIR% -o %OUT% %LIBS%
 ) else (
-    g++ %FLAGS% %DEFS% %INC% %SRC% %RC_OBJ% -o %OUT% %LIBS%
+    g++ %FLAGS% %DEFS% %INC% %SRC% %RC_OBJ% %LDIR% -o %OUT% %LIBS%
 )
 
 if %ERRORLEVEL% == 0 (

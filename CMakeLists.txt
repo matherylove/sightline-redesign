@@ -12,8 +12,20 @@ project(SightlinePlayer)
 
 set(IMGUI_DIR "${CMAKE_SOURCE_DIR}/imgui")
 
+# ── FFmpeg XP-mod ─────────────────────────────────────────────
+# Extract ffmpeg-7.1-*-win32-dev-xpmod-sse.7z into ./ffmpeg-xp/
+# The layout must be:
+#   ffmpeg-xp/include/libavformat/avformat.h  (and other headers)
+#   ffmpeg-xp/lib/libavcodec.a  (and other static libs)
+# You can override FFMPEG_DIR on the cmake command line:
+#   cmake -DFFMPEG_DIR=C:/path/to/ffmpeg-xp ...
+if(NOT DEFINED FFMPEG_DIR)
+    set(FFMPEG_DIR "${CMAKE_SOURCE_DIR}/ffmpeg-xp")
+endif()
+
 set(SOURCES
     src/main.cpp
+    src/video_player.cpp
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
     ${IMGUI_DIR}/imgui_tables.cpp
@@ -25,14 +37,22 @@ set(SOURCES
 include_directories(
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
+    ${FFMPEG_DIR}/include
 )
 
 add_executable(SightlinePlayer WIN32 ${SOURCES})
 
+target_link_directories(SightlinePlayer PRIVATE ${FFMPEG_DIR}/lib)
+
 # uuid     — WIC GUIDs (IID_IWICImagingFactory, CLSID_WICImagingFactory, GUID_WICPixelFormat32bppBGRA)
 # ole32    — CoCreateInstance / CoInitializeEx
 # oleaut32 — OLE Automation (COM helpers)
-target_link_libraries(SightlinePlayer d3d9 dwmapi user32 gdi32 gdiplus shell32 ole32 oleaut32 uuid)
+# winmm    — waveOut audio API (available on XP SP3)
+# FFmpeg libs: order matters — higher-level first, lower-level last
+target_link_libraries(SightlinePlayer
+    d3d9 dwmapi user32 gdi32 gdiplus shell32 ole32 oleaut32 uuid winmm
+    avcodec avformat avutil swscale swresample
+)
 
 if(MSVC)
     set_target_properties(SightlinePlayer PROPERTIES
