@@ -7,9 +7,16 @@
 
 #define WINVER       0x0501
 #define _WIN32_WINNT 0x0501
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #include <d3d9.h>
+// INITGUID must be defined before wincodec.h so the WIC GUIDs
+// (IID_IWICImagingFactory, CLSID_WICImagingFactory,
+//  GUID_WICPixelFormat32bppBGRA, …) are emitted as real symbols
+// inline — no windowscodecs.lib required on MinGW.
+#define INITGUID
 #include <wincodec.h>
 
 #include "imgui.h"
@@ -407,9 +414,6 @@ static bool VolBar(ImDrawList* dl,ImVec2 pos,float width,float height,float* val
 }
 
 // ─── IconBtn ─────────────────────────────────────────────────
-// FIX: Use IsItemActivated() instead of IsItemClicked() so the
-// button fires reliably on the exact frame the mouse button goes
-// down, regardless of hover state on the previous frame.
 static bool IconBtn(const char* id,ImVec2 pos,float size)
 {
     ImGui::SetCursorScreenPos(pos);
