@@ -12,11 +12,9 @@
 #endif
 #include <windows.h>
 #include <d3d9.h>
-// INITGUID must be defined before wincodec.h so the WIC GUIDs
-// (IID_IWICImagingFactory, CLSID_WICImagingFactory,
-//  GUID_WICPixelFormat32bppBGRA, …) are emitted as real symbols
-// inline — no windowscodecs.lib required on MinGW.
-#define INITGUID
+// WIC GUIDs are resolved via libuuid.a at link time (-luuid).
+// Do NOT use #define INITGUID here — it does not work for WIC
+// GUIDs with mingw-w64; -luuid in the link step is the fix.
 #include <wincodec.h>
 
 #include "imgui.h"
