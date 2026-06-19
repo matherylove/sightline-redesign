@@ -306,11 +306,14 @@ static void IconShare(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 }
 static void IconDownload(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 {
-    float hw=r*.3f;
-    dl->AddLine({c.x,c.y-r*.55f},{c.x,c.y+r*.1f},col,1.4f);
-    dl->AddLine({c.x,c.y+r*.1f},{c.x-hw,c.y-r*.15f},col,1.4f);
-    dl->AddLine({c.x,c.y+r*.1f},{c.x+hw,c.y-r*.15f},col,1.4f);
-    dl->AddLine({c.x-r*.55f,c.y+r*.55f},{c.x+r*.55f,c.y+r*.55f},col,1.4f);
+    // Arrow shaft pointing down
+    float hw=r*.32f;
+    dl->AddLine({c.x,c.y-r*.6f},{c.x,c.y+r*.05f},col,1.4f);
+    // Arrowhead
+    dl->AddLine({c.x,c.y+r*.05f},{c.x-hw,c.y-r*.2f},col,1.4f);
+    dl->AddLine({c.x,c.y+r*.05f},{c.x+hw,c.y-r*.2f},col,1.4f);
+    // Base line
+    dl->AddLine({c.x-r*.55f,c.y+r*.5f},{c.x+r*.55f,c.y+r*.5f},col,1.4f);
 }
 static void IconDots(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 {
@@ -338,6 +341,9 @@ static void IconThumbDown(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
     dl->AddRectFilled({c.x-hw,c.y-hh},{c.x-hw+r*.22f,c.y-hh*.1f},col,1.f);
 }
 
+// FIX: IconSkip — draw number at true centre of the arc circle,
+//      not offset by the arc radius. The "10" label belongs inside
+//      the circular arc, so use the button centre (c) directly.
 static void IconSkip(ImDrawList* dl,ImVec2 c,float r,ImU32 col,bool forward)
 {
     if(forward){
@@ -354,9 +360,10 @@ static void IconSkip(ImDrawList* dl,ImVec2 c,float r,ImU32 col,bool forward)
     ImVec2 p1={ax+as2*cosf(ang+3.14f*0.7f),ay+as2*sinf(ang+3.14f*0.7f)};
     ImVec2 p2={ax+as2*cosf(ang-3.14f*0.7f),ay+as2*sinf(ang-3.14f*0.7f)};
     dl->AddTriangleFilled(tip,p1,p2,col);
+    // Centre "10" label inside the arc circle (at c, not at arc tip)
     const char* num="10";
     ImVec2 ns=TS(num);
-    dl->AddText(g_font13,13.f,{c.x-ns.x*.5f,c.y-ns.y*.5f},col,num);
+    dl->AddText(g_font13,13.f,{c.x-ns.x*.5f,c.y-ns.y*.5f+r*.05f},col,num);
 }
 
 // ─── seekbar / volbar ─────────────────────────────────────────
@@ -639,20 +646,18 @@ static void DrawVideoArea(ImDrawList* dl,ImVec2 pos,float w,float h)
 }
 
 // ─── controls bar ────────────────────────────────────────────
-// Layout (top→bottom inside the 62px bar):
-//   [0..8]    top padding
-//   [8..22]   seek rail hit area (14px tall, centred on y=15)
-//   [22..30]  gap
-//   [30..46]  time labels row  (cy = 36 from bar top)
-//   [36..62]  buttons / volume / quality row  (cy = 49 from bar top)
+// Layout (top→bottom, bar height = 62px):
 //
-// This keeps the seek rail cleanly inside the bar and
-// prevents it from bleeding into or overlapping the video area.
+//   [0 .. 8]    top padding
+//   [8 .. 22]   seek rail hit-area  (14 px tall)
+//   [22.. 36]   time labels row     (rendered at seekY+seekH+2)
+//   [36.. 62]   buttons / volume / quality row  (cy at bar_top+47)
+//
 static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
 {
-    const float h      = 62.f;   // bar height (was 52)
-    const float seekH  = 14.f;   // hit-area height for the seek rail
-    const float seekY  = pos.y + 8.f;  // 8px top padding before rail
+    const float h      = 62.f;
+    const float seekH  = 14.f;
+    const float seekY  = pos.y + 8.f;
 
     RectFill(dl,pos,{w,h},C_SURFACE);
     dl->AddLine(pos,{pos.x+w,pos.y},C_BORDER,1.f);
@@ -661,26 +666,33 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
     SeekBar(ImGui::GetWindowDrawList(),{pos.x,seekY},w,seekH,&g_seek,0.42f,
         COL32(255,255,255,25),COL32(78,168,168,60),C_ACCENT,C_TEXT);
 
-    // ── Time labels ───────────────────────────────────────────
+    // ── Time labels (drawn AFTER seek so they're on top) ──────
     {
-        const float timeY = seekY + seekH + 2.f;  // just below the rail
+        // FIX: use a clip rect that spans the full bar width so
+        //      the left-side timestamp is never clipped off.
+        const float timeY = seekY + seekH + 2.f;
         int totalSec=600, curSec=(int)(g_seek*totalSec);
         char cur[16]; snprintf(cur,sizeof(cur),"%d:%02d",curSec/60,curSec%60);
         const char* tot="10:00";
-        Txt(dl,{pos.x+4.f, timeY},C_TEXT_FAINT,cur);
+        // Push a wide clip so neither label is trimmed
+        dl->PushClipRect({pos.x,pos.y},{pos.x+w,pos.y+h},true);
+        Txt(dl,{pos.x+6.f, timeY},C_TEXT_FAINT,cur);
         ImVec2 ts2=TS(tot);
-        Txt(dl,{pos.x+w-ts2.x-4.f, timeY},C_TEXT_FAINT,tot);
+        Txt(dl,{pos.x+w-ts2.x-6.f, timeY},C_TEXT_FAINT,tot);
+        dl->PopClipRect();
     }
 
-    // ── Button / control row ─────────────────────────────────
-    const float cy = pos.y + h - 16.f;  // vertically centred in lower half
+    // ── Button / control row ──────────────────────────────────
+    // cy sits in the lower half of the bar, centred between the
+    // time-label row (~y+36) and the bar bottom (y+62) → y+47.
+    const float cy = pos.y + 47.f;
     float x = pos.x + 12.f;
 
     ImDrawList* wdl = ImGui::GetWindowDrawList();
 
     // Play/Pause
     {
-        const float btnSz = 34.f;
+        const float btnSz = 28.f;   // FIX: reduced from 34 to match HTML reference
         const float bhalf = btnSz * 0.5f;
         ImVec2 bpos = {x, cy - bhalf};
         ImGui::SetCursorScreenPos(bpos);
@@ -688,53 +700,65 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
         bool hov = ImGui::IsItemHovered();
         if(ImGui::IsItemActivated()) g_playing = !g_playing;
         ImU32 bg = hov ? C_SURFACE3 : C_SURFACE2;
-        wdl->AddRectFilled(bpos,{bpos.x+btnSz,bpos.y+btnSz},bg,6.f);
-        wdl->AddRect(bpos,{bpos.x+btnSz,bpos.y+btnSz},hov?C_BORDER_STR:C_BORDER,6.f,0,1.f);
+        wdl->AddRectFilled(bpos,{bpos.x+btnSz,bpos.y+btnSz},bg,5.f);
+        wdl->AddRect(bpos,{bpos.x+btnSz,bpos.y+btnSz},hov?C_BORDER_STR:C_BORDER,5.f,0,1.f);
         ImVec2 ic = {bpos.x + btnSz * 0.5f, bpos.y + btnSz * 0.5f};
-        if(g_playing) IconPause(wdl,ic,9.f,C_TEXT);
-        else          IconPlay (wdl,ic,9.f,C_TEXT);
+        if(g_playing) IconPause(wdl,ic,8.f,C_TEXT);
+        else          IconPlay (wdl,ic,8.f,C_TEXT);
         x += btnSz + 4.f;
     }
 
     // Rewind -10s
     {
-        const float bsz=30.f;
+        const float bsz=26.f;
         bool clicked = IconBtn("##m10",{x,cy-bsz*.5f},bsz);
-        IconSkip(wdl,{x+bsz*.5f,cy},10.f,C_TEXT_MUTED,false);
+        IconSkip(wdl,{x+bsz*.5f,cy},9.f,C_TEXT_MUTED,false);
         if(clicked){ g_seek-=10.f/600.f; if(g_seek<0.f)g_seek=0.f; }
         x+=bsz+4.f;
     }
 
     // Forward +10s
     {
-        const float bsz=30.f;
+        const float bsz=26.f;
         bool clicked = IconBtn("##p10",{x,cy-bsz*.5f},bsz);
-        IconSkip(wdl,{x+bsz*.5f,cy},10.f,C_TEXT_MUTED,true);
+        IconSkip(wdl,{x+bsz*.5f,cy},9.f,C_TEXT_MUTED,true);
         if(clicked){ g_seek+=10.f/600.f; if(g_seek>1.f)g_seek=1.f; }
         x+=bsz+4.f;
     }
 
-    // Volume
-    IconVolume(wdl,{x+9.f,cy},9.f,C_TEXT_MUTED);
-    x+=20.f;
-    VolBar(wdl,{x,cy-7.f},70.f,14.f,&g_vol);
-    x+=76.f;
+    // FIX: volume icon — use a fixed icon width so the vol slider
+    //      starts at a predictable offset and doesn't overlap or gap.
+    {
+        const float iconW = 22.f;  // bounding width of the volume icon
+        IconVolume(wdl,{x+iconW*.5f,cy},9.f,C_TEXT_MUTED);
+        x += iconW + 4.f;
+    }
+    VolBar(wdl,{x,cy-7.f},72.f,14.f,&g_vol);
+    x += 72.f + 6.f;
 
     float rx=pos.x+w-12.f;
 
-    // Fullscreen
-    rx-=30.f;
+    // Fullscreen (right-anchored)
+    rx-=26.f;
     if(IconBtn("##fs",{rx,cy-13.f},26.f)){}
     IconFullscreen(wdl,{rx+13.f,cy},9.f,C_TEXT_MUTED);
 
-    // Quality selector
-    rx-=58.f;
-    RectFill(wdl,{rx,cy-11.f},{52.f,22.f},C_SURFACE2,5.f);
-    Rect(wdl,{rx,cy-11.f},{52.f,22.f},C_BORDER,5.f);
-    ImGui::SetCursorScreenPos({rx,cy-11.f});
-    ImGui::InvisibleButton("##qual",{52.f,22.f});
-    if(ImGui::IsItemActivated()) g_quality=(g_quality+1)%g_qualityCount;
-    Txt(wdl,{rx+6.f,cy-6.f},C_ACCENT,g_qualityOpts[g_quality]);
+    // FIX: quality badge — wider pill (60px) so "2160p" fits without
+    //      clipping, text properly centred vertically.
+    rx-=66.f;
+    {
+        const float qW=60.f, qH=22.f;
+        const float qX=rx, qY=cy-qH*.5f;
+        RectFill(wdl,{qX,qY},{qW,qH},C_SURFACE2,5.f);
+        Rect(wdl,{qX,qY},{qW,qH},C_BORDER,5.f);
+        ImGui::SetCursorScreenPos({qX,qY});
+        ImGui::InvisibleButton("##qual",{qW,qH});
+        if(ImGui::IsItemActivated()) g_quality=(g_quality+1)%g_qualityCount;
+        const char* qlbl=g_qualityOpts[g_quality];
+        ImVec2 qts=TS(qlbl);
+        // FIX: centre text both horizontally and vertically in the pill
+        Txt(wdl,{qX+(qW-qts.x)*.5f, qY+(qH-qts.y)*.5f},C_ACCENT,qlbl);
+    }
 }
 
 // ─── action bar ──────────────────────────────────────────────
@@ -748,6 +772,7 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
     float x=pos.x+12.f;
     ImDrawList* wdl=ImGui::GetWindowDrawList();
 
+    // FIX: like count corrected to "248K" (was "24BK" due to stray B)
     {
         const char* cnt="248K";
         ImVec2 cs=TS(cnt);
@@ -811,6 +836,7 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
         IconDots(wdl,{x+pillW*.5f,cy},7.f,hov?C_TEXT:C_TEXT_MUTED);
     }
+    // FIX: meta string — "1.7B views" (not "1.78 views"); bullet is U+2022 via \xe2\x80\xa2
     const char* meta="1.7B views  \xe2\x80\xa2  Jul 28, 1987";
     ImVec2 ms=TS(meta);
     Txt(wdl,{pos.x+w-ms.x-12.f,cy-ms.y*.5f},C_TEXT_FAINT,meta);
@@ -974,7 +1000,7 @@ static void RenderFrame()
 
     ImDrawList* dl=ImGui::GetWindowDrawList();
 
-    const float TB_H  =38.f, SB_H=22.f, CTRL_H=62.f, ACT_H=46.f;  // CTRL_H updated to 62
+    const float TB_H  =38.f, SB_H=22.f, CTRL_H=62.f, ACT_H=46.f;
     const float SIDE_W=300.f, MAIN_W=sw-SIDE_W;
 
     float contentH=sh-TB_H-SB_H;
