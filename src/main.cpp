@@ -379,13 +379,14 @@ static bool VolBar(ImDrawList* dl,ImVec2 pos,float width,float height,float* val
 }
 
 // ─── IconBtn ─────────────────────────────────────────────────
-static bool IconBtn(const char* id,ImVec2 pos,float size)
+// Uses the draw list passed in (dl) instead of GetWindowDrawList()
+// to keep all draw calls in the same list and avoid ordering bugs.
+static bool IconBtn(ImDrawList* dl,const char* id,ImVec2 pos,float size)
 {
     ImGui::SetCursorScreenPos(pos);
     ImGui::InvisibleButton(id,{size,size});
     if(ImGui::IsItemHovered()){
-        ImGui::GetWindowDrawList()->AddRectFilled(
-            pos,{pos.x+size,pos.y+size},COL32(255,255,255,20),4.f);
+        dl->AddRectFilled(pos,{pos.x+size,pos.y+size},COL32(255,255,255,20),4.f);
     }
     return ImGui::IsItemActivated();
 }
@@ -614,7 +615,9 @@ static void DrawVideoArea(ImDrawList* dl,ImVec2 pos,float w,float h)
 // ─── controls bar ────────────────────────────────────────────
 static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
 {
-    const float h      = 72.f;
+    // h=76 gives enough vertical room so the time labels (at seekY+seekH+2)
+    // never overlap the button row below them.
+    const float h      = 76.f;
     const float seekH  = 14.f;
     const float seekY  = pos.y + 8.f;
 
@@ -626,6 +629,8 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
         COL32(255,255,255,25),COL32(78,168,168,60),C_ACCENT,C_TEXT);
 
     // ── Time labels ───────────────────────────────────────────
+    // timeY = seekY + seekH + 2 = 8 + 14 + 2 = 24  (relative to pos.y)
+    // Button row cy = pos.y + 58, buttons span [44 .. 72] — no overlap.
     {
         const float timeY = seekY + seekH + 2.f;
         int totalSec=600, curSec=(int)(g_seek*totalSec);
@@ -639,7 +644,9 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
     }
 
     // ── Button row ───────────────────────────────────────────
-    const float cy = pos.y + 54.f;
+    // cy raised to pos.y+58 so buttons sit in the lower portion
+    // of the taller bar, well clear of the time labels above.
+    const float cy = pos.y + 58.f;
     float x = pos.x + 12.f;
 
     // Play / Pause  (icon font)
@@ -699,8 +706,9 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
     float rx=pos.x+w-12.f;
 
     // Fullscreen  (icon font: expand)
+    // IconBtn now takes dl so hover rect goes into the same draw list.
     rx-=26.f;
-    if(IconBtn("##fs",{rx,cy-13.f},26.f)){}
+    if(IconBtn(dl,"##fs",{rx,cy-13.f},26.f)){}
     IcoTxt(dl, {rx+13.f, cy}, 13.f, C_TEXT_MUTED, ICO_EXPAND);
 
     // Quality badge (text, unchanged)
@@ -728,7 +736,6 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
     dl->AddLine({pos.x,pos.y+h},{pos.x+w,pos.y+h},C_BORDER,1.f);
     const float cy=pos.y+h*.5f, by=cy-btnH*.5f;
     float x=pos.x+12.f;
-    ImDrawList* wdl=ImGui::GetWindowDrawList();
 
     // Like pill (thumb-up icon + count)
     {
@@ -740,13 +747,13 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         ImGui::InvisibleButton("##like",{pillW,btnH});
         bool hov=ImGui::IsItemHovered();
         ImU32 bg=hov?C_ACCENT_SOFT:COL32(78,168,168,20);
-        wdl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
-        wdl->AddRect({x,by},{x+pillW,by+btnH},hov?C_ACCENT:C_ACCENT_LINE,8.f,0,1.f);
+        dl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
+        dl->AddRect({x,by},{x+pillW,by+btnH},hov?C_ACCENT:C_ACCENT_LINE,8.f,0,1.f);
         float iconCX=x+padLR+isz.x*.5f;
-        IcoTxt(wdl,{iconCX,cy},iconSz,C_ACCENT,ICO_THUMB_UP);
+        IcoTxt(dl,{iconCX,cy},iconSz,C_ACCENT,ICO_THUMB_UP);
         float divX=x+padLR+isz.x+4.f;
-        wdl->AddLine({divX,by+6.f},{divX,by+btnH-6.f},C_ACCENT_LINE,1.f);
-        Txt(wdl,{divX+4.f,cy-cs.y*.5f},C_ACCENT,cnt);
+        dl->AddLine({divX,by+6.f},{divX,by+btnH-6.f},C_ACCENT_LINE,1.f);
+        Txt(dl,{divX+4.f,cy-cs.y*.5f},C_ACCENT,cnt);
         x+=pillW+gap;
     }
     // Dislike pill (thumb-down icon + label)
@@ -757,13 +764,13 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         ImGui::SetCursorScreenPos({x,by}); ImGui::InvisibleButton("##dis",{pillW,btnH});
         bool hov=ImGui::IsItemHovered();
         ImU32 bg=hov?COL32(255,255,255,18):COL32(255,255,255,8);
-        wdl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
-        wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
-        IcoTxt(wdl,{x+padLR+isz.x*.5f,cy},iconSz,hov?C_ERROR:C_TEXT_MUTED,ICO_THUMB_DOWN);
-        Txt(wdl,{x+padLR+isz.x+6.f,cy-ls.y*.5f},hov?C_TEXT:C_TEXT_MUTED,lbl);
+        dl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
+        dl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
+        IcoTxt(dl,{x+padLR+isz.x*.5f,cy},iconSz,hov?C_ERROR:C_TEXT_MUTED,ICO_THUMB_DOWN);
+        Txt(dl,{x+padLR+isz.x+6.f,cy-ls.y*.5f},hov?C_TEXT:C_TEXT_MUTED,lbl);
         x+=pillW+gap;
     }
-    wdl->AddLine({x+2.f,by+6.f},{x+2.f,by+btnH-6.f},C_BORDER,1.f); x+=8.f;
+    dl->AddLine({x+2.f,by+6.f},{x+2.f,by+btnH-6.f},C_BORDER,1.f); x+=8.f;
     // Share pill (share icon + label)
     {
         const char* lbl="Share"; ImVec2 ls=TS(lbl);
@@ -772,10 +779,10 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         ImGui::SetCursorScreenPos({x,by}); ImGui::InvisibleButton("##shr",{pillW,btnH});
         bool hov=ImGui::IsItemHovered();
         ImU32 bg=hov?COL32(255,255,255,18):COL32(255,255,255,8);
-        wdl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
-        wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
-        IcoTxt(wdl,{x+padLR+isz.x*.5f,cy},iconSz,hov?C_TEXT:C_TEXT_MUTED,ICO_SHARE);
-        Txt(wdl,{x+padLR+isz.x+6.f,cy-ls.y*.5f},hov?C_TEXT:C_TEXT_MUTED,lbl);
+        dl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
+        dl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
+        IcoTxt(dl,{x+padLR+isz.x*.5f,cy},iconSz,hov?C_TEXT:C_TEXT_MUTED,ICO_SHARE);
+        Txt(dl,{x+padLR+isz.x+6.f,cy-ls.y*.5f},hov?C_TEXT:C_TEXT_MUTED,lbl);
         x+=pillW+gap;
     }
     // Download pill (download icon + label)
@@ -786,25 +793,25 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         ImGui::SetCursorScreenPos({x,by}); ImGui::InvisibleButton("##dl",{pillW,btnH});
         bool hov=ImGui::IsItemHovered();
         ImU32 bg=hov?COL32(255,255,255,18):COL32(255,255,255,8);
-        wdl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
-        wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
-        IcoTxt(wdl,{x+padLR+isz.x*.5f,cy},iconSz,hov?C_TEXT:C_TEXT_MUTED,ICO_DOWNLOAD);
-        Txt(wdl,{x+padLR+isz.x+6.f,cy-ls.y*.5f},hov?C_TEXT:C_TEXT_MUTED,lbl);
+        dl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
+        dl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
+        IcoTxt(dl,{x+padLR+isz.x*.5f,cy},iconSz,hov?C_TEXT:C_TEXT_MUTED,ICO_DOWNLOAD);
+        Txt(dl,{x+padLR+isz.x+6.f,cy-ls.y*.5f},hov?C_TEXT:C_TEXT_MUTED,lbl);
         x+=pillW+gap;
     }
-    wdl->AddLine({x+2.f,by+6.f},{x+2.f,by+btnH-6.f},C_BORDER,1.f); x+=8.f;
+    dl->AddLine({x+2.f,by+6.f},{x+2.f,by+btnH-6.f},C_BORDER,1.f); x+=8.f;
     // More pill (ellipsis icon)
     {
         float pillW=34.f;
         ImGui::SetCursorScreenPos({x,by}); ImGui::InvisibleButton("##more",{pillW,btnH});
         bool hov=ImGui::IsItemHovered();
-        wdl->AddRectFilled({x,by},{x+pillW,by+btnH},hov?COL32(255,255,255,18):COL32(255,255,255,8),8.f);
-        wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
-        IcoTxt(wdl,{x+pillW*.5f,cy},13.f,hov?C_TEXT:C_TEXT_MUTED,ICO_ELLIPSIS_H);
+        dl->AddRectFilled({x,by},{x+pillW,by+btnH},hov?COL32(255,255,255,18):COL32(255,255,255,8),8.f);
+        dl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
+        IcoTxt(dl,{x+pillW*.5f,cy},13.f,hov?C_TEXT:C_TEXT_MUTED,ICO_ELLIPSIS_H);
     }
     const char* meta="1.7B views  \xe2\x80\xa2  Jul 28, 1987";
     ImVec2 ms=TS(meta);
-    Txt(wdl,{pos.x+w-ms.x-12.f,cy-ms.y*.5f},C_TEXT_FAINT,meta);
+    Txt(dl,{pos.x+w-ms.x-12.f,cy-ms.y*.5f},C_TEXT_FAINT,meta);
 }
 
 // ─── info / description zone ─────────────────────────────────
@@ -846,12 +853,11 @@ static void DrawInfoZone(ImDrawList* dl,ImVec2 pos,float w,float& contentH)
     ImGui::InvisibleButton("##sub",{112.f,28.f});
     bool subHov=ImGui::IsItemHovered();
     if(ImGui::IsItemActivated()) g_subscribed=!g_subscribed;
-    ImDrawList* wdl=ImGui::GetWindowDrawList();
     ImU32 subbg=g_subscribed?C_SURFACE3:(subHov?C_ACCENT_HOV:C_ACCENT);
-    wdl->AddRectFilled({sbx,y+5.f},{sbx+112.f,y+33.f},subbg,14.f);
+    dl->AddRectFilled({sbx,y+5.f},{sbx+112.f,y+33.f},subbg,14.f);
     const char* sublbl=g_subscribed?"Subscribed":"Subscribe";
     ImVec2 sls=TS(sublbl);
-    Txt(wdl,{sbx+(112.f-sls.x)*.5f,y+5.f+(28.f-sls.y)*.5f},g_subscribed?C_TEXT_MUTED:C_WHITE,sublbl);
+    Txt(dl,{sbx+(112.f-sls.x)*.5f,y+5.f+(28.f-sls.y)*.5f},g_subscribed?C_TEXT_MUTED:C_WHITE,sublbl);
     y+=avatarR*2.f+10.f;
     dl->AddLine({pos.x,y},{pos.x+w,y},C_BORDER,1.f); y+=10.f;
 
@@ -963,7 +969,7 @@ static void RenderFrame()
 
     ImDrawList* dl=ImGui::GetWindowDrawList();
 
-    const float TB_H  =38.f, SB_H=22.f, CTRL_H=72.f, ACT_H=46.f;
+    const float TB_H  =38.f, SB_H=22.f, CTRL_H=76.f, ACT_H=46.f;
     const float SIDE_W=300.f, MAIN_W=sw-SIDE_W;
 
     float contentH=sh-TB_H-SB_H;
@@ -1017,6 +1023,12 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int)
     ImGuiStyle& style=ImGui::GetStyle();
     style.WindowRounding=0; style.FrameRounding=4; style.ScrollbarRounding=4;
     style.FramePadding={4,4}; style.ItemSpacing={6,4};
+
+    // ── Backend init ──────────────────────────────────────────
+    // MUST be called after ImGui::CreateContext() and before any
+    // ImGui_ImplDX9_NewFrame() / ImGui_ImplWin32_NewFrame() call.
+    ImGui_ImplWin32_Init(g_hwnd);
+    ImGui_ImplDX9_Init(g_pd3dDev);
 
     // ── Font loading ──────────────────────────────────────────
     // Step 1: Electrolize (body text) — loaded first so it becomes
