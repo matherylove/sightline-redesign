@@ -9,6 +9,8 @@ set IMGUI=imgui
 set OUT=SightlinePlayer.exe
 set FONT_TTF=%IMGUI%\misc\fonts\ProggyVector.ttf
 set FONT_H=src\font_proggy.h
+set RC_SRC=src\sightline.rc
+set RC_OBJ=sightline_res.o
 
 REM ── Step 1: Generate embedded font header ─────────────────
 echo Generating %FONT_H% ...
@@ -26,6 +28,26 @@ if exist "%FONT_TTF%" (
     echo   WARNING: %FONT_TTF% not found.
     echo   Font will fall back to system fonts at runtime.
     echo // font_proggy.h -- placeholder, ProggyVector.ttf not found > "%FONT_H%"
+)
+
+REM ── Step 1.5: Compile icon resource (.rc -> .o) ───────────
+echo Compiling icon resource %RC_SRC% ...
+if exist "%RC_SRC%" (
+    if exist "src\favicon.ico" (
+        windres "%RC_SRC%" -o "%RC_OBJ%"
+        if %ERRORLEVEL% == 0 (
+            echo   OK: %RC_OBJ% generated.
+        ) else (
+            echo   WARNING: windres failed — EXE will have no embedded icon.
+            set RC_OBJ=
+        )
+    ) else (
+        echo   WARNING: src\favicon.ico not found — skipping icon resource.
+        set RC_OBJ=
+    )
+) else (
+    echo   WARNING: %RC_SRC% not found — skipping icon resource.
+    set RC_OBJ=
 )
 
 REM ── Step 2: Compile ───────────────────────────────────────
@@ -49,7 +71,12 @@ REM  oleaut32 — OLE Automation (COM helpers)
 REM  gdiplus  — GDI+ image rendering
 set LIBS=-ld3d9 -ldwmapi -luser32 -lgdi32 -lgdiplus -lshell32 -lole32 -loleaut32 -luuid
 
-g++ %FLAGS% %DEFS% %INC% %SRC% -o %OUT% %LIBS%
+REM Link the .rc object if it was compiled successfully
+if "%RC_OBJ%"=="" (
+    g++ %FLAGS% %DEFS% %INC% %SRC% -o %OUT% %LIBS%
+) else (
+    g++ %FLAGS% %DEFS% %INC% %SRC% %RC_OBJ% -o %OUT% %LIBS%
+)
 
 if %ERRORLEVEL% == 0 (
   echo.
