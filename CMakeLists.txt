@@ -29,7 +29,10 @@ include_directories(
 
 add_executable(SightlinePlayer WIN32 ${SOURCES})
 
-target_link_libraries(SightlinePlayer d3d9 user32 gdi32 gdiplus shell32 ole32 oleaut32)
+# uuid     — WIC GUIDs (IID_IWICImagingFactory, CLSID_WICImagingFactory, GUID_WICPixelFormat32bppBGRA)
+# ole32    — CoCreateInstance / CoInitializeEx
+# oleaut32 — OLE Automation (COM helpers)
+target_link_libraries(SightlinePlayer d3d9 dwmapi user32 gdi32 gdiplus shell32 ole32 oleaut32 uuid)
 
 if(MSVC)
     set_target_properties(SightlinePlayer PROPERTIES

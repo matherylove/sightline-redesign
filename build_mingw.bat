@@ -43,7 +43,11 @@ set DEFS=-DWINVER=0x0501 -D_WIN32_WINNT=0x0501 -DWIN32_LEAN_AND_MEAN
 
 set FLAGS=-m32 -O2 -mwindows -static -static-libgcc -static-libstdc++
 
-set LIBS=-ld3d9 -ldwmapi -luser32 -lgdi32 -lshell32
+REM  uuid     — WIC GUIDs (IID_IWICImagingFactory, CLSID_WICImagingFactory, GUID_WICPixelFormat32bppBGRA)
+REM  ole32    — CoCreateInstance / CoInitializeEx
+REM  oleaut32 — OLE Automation (COM helpers)
+REM  gdiplus  — GDI+ image rendering
+set LIBS=-ld3d9 -ldwmapi -luser32 -lgdi32 -lgdiplus -lshell32 -lole32 -loleaut32 -luuid
 
 g++ %FLAGS% %DEFS% %INC% %SRC% -o %OUT% %LIBS%
 
