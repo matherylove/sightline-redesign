@@ -127,8 +127,9 @@ jobs:
           INC="-Isrc -I$IMGUI -I$IMGUI/backends"
           DEFS="-DWINVER=0x0501 -D_WIN32_WINNT=0x0501 -DWIN32_LEAN_AND_MEAN"
           FLAGS="-m32 -O2 -mwindows -static -static-libgcc -static-libstdc++"
+          # gdiplus: GDI+ image loading (GdiplusStartup, GdipCreateBitmapFromFile, etc.)
           # ole32 + oleaut32: needed for WIC (IWICImagingFactory) PNG loader
-          LIBS="-ld3d9 -ldwmapi -luser32 -lgdi32 -lshell32 -lole32 -loleaut32"
+          LIBS="-ld3d9 -ldwmapi -luser32 -lgdi32 -lgdiplus -lshell32 -lole32 -loleaut32"
 
           g++ $FLAGS $DEFS $INC $SRC -o SightlinePlayer.exe $LIBS
 
