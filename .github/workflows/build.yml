@@ -45,7 +45,7 @@ jobs:
           Expand-Archive imgui.zip -DestinationPath .
           Rename-Item imgui-1.90.9 imgui
 
-      # ── 4. Download Electrolize font and generate header (pure PowerShell) ──
+      # ── 4. Download Electrolize font and generate header ────
       - name: Download Electrolize-Regular.ttf
         shell: pwsh
         run: |
@@ -63,7 +63,6 @@ jobs:
           $lines.Add('// Auto-generated from Electrolize-Regular.ttf (OFL 1.1)')
           $lines.Add("static const unsigned int electrolize_regular_ttf_len = $($bytes.Length)u;")
           $lines.Add('static const unsigned char electrolize_regular_ttf[] = {')
-
           $row = [System.Text.StringBuilder]::new()
           for ($i = 0; $i -lt $bytes.Length; $i++) {
             if ($i % 16 -eq 0) { $null = $row.Append('    ') }
@@ -73,12 +72,43 @@ jobs:
               $null = $row.Clear()
             }
           }
-
           $lines.Add('};')
           [System.IO.File]::WriteAllLines('src/font_electrolize.h', $lines)
           Write-Host "Generated src/font_electrolize.h ($($bytes.Length) bytes embedded)"
 
-      # ── 5. Build ────────────────────────────────────────────
+      # ── 5. Generate logo header from PNG ───────────────────
+      - name: Generate src/logo_data.h from Sightline Logo.png
+        shell: pwsh
+        run: |
+          $src = 'src/Sightline Logo.png'
+          if (-not (Test-Path $src)) {
+            Write-Host 'Logo PNG not found, skipping header generation'
+            '#pragma once' | Set-Content 'src/logo_data.h'
+            'static const unsigned char sightline_logo_png[] = {};' | Add-Content 'src/logo_data.h'
+            'static const unsigned int sightline_logo_png_len = 0u;' | Add-Content 'src/logo_data.h'
+            exit 0
+          }
+          $bytes = [System.IO.File]::ReadAllBytes($src)
+          $lines = [System.Collections.Generic.List[string]]::new()
+          $lines.Add('#pragma once')
+          $lines.Add('')
+          $lines.Add('// Auto-generated from Sightline Logo.png')
+          $lines.Add("static const unsigned int sightline_logo_png_len = $($bytes.Length)u;")
+          $lines.Add('static const unsigned char sightline_logo_png[] = {')
+          $row = [System.Text.StringBuilder]::new()
+          for ($i = 0; $i -lt $bytes.Length; $i++) {
+            if ($i % 16 -eq 0) { $null = $row.Append('    ') }
+            $null = $row.Append("0x$($bytes[$i].ToString('x2')), ")
+            if (($i + 1) % 16 -eq 0 -or $i -eq $bytes.Length - 1) {
+              $lines.Add($row.ToString().TrimEnd())
+              $null = $row.Clear()
+            }
+          }
+          $lines.Add('};')
+          [System.IO.File]::WriteAllLines('src/logo_data.h', $lines)
+          Write-Host "Generated src/logo_data.h ($($bytes.Length) bytes embedded)"
+
+      # ── 6. Build ────────────────────────────────────────────
       - name: Build SightlinePlayer.exe
         shell: msys2 {0}
         run: |
@@ -97,13 +127,14 @@ jobs:
           INC="-Isrc -I$IMGUI -I$IMGUI/backends"
           DEFS="-DWINVER=0x0501 -D_WIN32_WINNT=0x0501 -DWIN32_LEAN_AND_MEAN"
           FLAGS="-m32 -O2 -mwindows -static -static-libgcc -static-libstdc++"
-          LIBS="-ld3d9 -ldwmapi -luser32 -lgdi32 -lshell32"
+          # ole32 + oleaut32: needed for WIC (IWICImagingFactory) PNG loader
+          LIBS="-ld3d9 -ldwmapi -luser32 -lgdi32 -lshell32 -lole32 -loleaut32"
 
           g++ $FLAGS $DEFS $INC $SRC -o SightlinePlayer.exe $LIBS
 
           echo "Build OK — $(du -h SightlinePlayer.exe)"
 
-      # ── 6. Upload artifact ──────────────────────────────────
+      # ── 7. Upload artifact ──────────────────────────────────
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
