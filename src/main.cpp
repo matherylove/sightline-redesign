@@ -233,135 +233,141 @@ cleanup:
 }
 
 // ─── helpers ─────────────────────────────────────────────────
-static void RectFill(ImDrawList* dl,ImVec2 p,ImVec2 sz,ImU32 c,float r=0.f)
-{ dl->AddRectFilled(p,{p.x+sz.x,p.y+sz.y},c,r); }
-static void Rect(ImDrawList* dl,ImVec2 p,ImVec2 sz,ImU32 c,float r=0.f,float t=1.f)
-{ dl->AddRect(p,{p.x+sz.x,p.y+sz.y},c,r,0,t); }
+static void RectFill(ImDrawList* dl,ImVec2 p,ImVec2 s,ImU32 col,float r=0.f)
+    { dl->AddRectFilled(p,{p.x+s.x,p.y+s.y},col,r); }
+static void Rect(ImDrawList* dl,ImVec2 p,ImVec2 s,ImU32 col,float r=0.f,float t=1.f)
+    { dl->AddRect(p,{p.x+s.x,p.y+s.y},col,r,0,t); }
+static void Txt(ImDrawList* dl,ImVec2 p,ImU32 col,const char* s)
+    { dl->AddText(p,col,s); }
+static ImVec2 TS(const char* s){ return ImGui::CalcTextSize(s); }
 
-static void Txt(ImDrawList* dl,ImVec2 p,ImU32 c,const char* s,float wrap=0.f)
-{
-    if(!g_font13) return;
-    if(wrap>0.f) dl->AddText(g_font13,13.f,p,c,s,NULL,wrap);
-    else         dl->AddText(g_font13,13.f,p,c,s);
-}
-static void Txt16(ImDrawList* dl,ImVec2 p,ImU32 c,const char* s,float wrap=0.f)
-{
-    ImFont* f  = (g_font16 && g_font16!=g_font13) ? g_font16 : g_font13;
-    float   sz = (g_font16 && g_font16!=g_font13) ? 16.f : 13.f;
-    if(!f) return;
-    if(wrap>0.f) dl->AddText(f,sz,p,c,s,NULL,wrap);
-    else         dl->AddText(f,sz,p,c,s);
-}
-static ImVec2 TS(const char* s,float wrap=0.f)
-{
-    if(!g_font13) return ImGui::CalcTextSize(s);
-    return g_font13->CalcTextSizeA(13.f,FLT_MAX,wrap,s);
-}
-static ImVec2 TS16(const char* s,float wrap=0.f)
-{
-    ImFont* f  = (g_font16 && g_font16!=g_font13) ? g_font16 : g_font13;
-    float   sz = (g_font16 && g_font16!=g_font13) ? 16.f : 13.f;
-    if(!f) return ImGui::CalcTextSize(s);
-    return f->CalcTextSizeA(sz,FLT_MAX,wrap,s);
-}
-
-// ─── icon drawing ────────────────────────────────────────────
+// ─── icon primitives ─────────────────────────────────────────
 static void IconPlay(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
-{ dl->AddTriangleFilled({c.x-r*.4f,c.y-r*.6f},{c.x+r*.7f,c.y},{c.x-r*.4f,c.y+r*.6f},col); }
-
+{
+    dl->AddTriangleFilled({c.x-r*.6f,c.y-r},{c.x-r*.6f,c.y+r},{c.x+r*.9f,c.y},col);
+}
 static void IconPause(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 {
-    float w=r*.28f,h=r*.65f,g=r*.22f;
-    dl->AddRectFilled({c.x-g-w,c.y-h},{c.x-g,c.y+h},col,1.f);
-    dl->AddRectFilled({c.x+g,c.y-h},{c.x+g+w,c.y+h},col,1.f);
+    float hw=r*.35f,hh=r*.9f;
+    dl->AddRectFilled({c.x-hw*2.2f,c.y-hh},{c.x-hw*.4f,c.y+hh},col,1.f);
+    dl->AddRectFilled({c.x+hw*.4f, c.y-hh},{c.x+hw*2.2f,c.y+hh},col,1.f);
 }
 static void IconVolume(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 {
-    float hh=r*.5f;
-    dl->AddRectFilled({c.x-r*.5f,c.y-hh*.55f},{c.x-r*.1f,c.y+hh*.55f},col);
-    dl->PathLineTo({c.x-r*.12f,c.y-hh});
-    dl->PathLineTo({c.x+r*.45f,c.y-hh*.5f});
-    dl->PathLineTo({c.x+r*.45f,c.y+hh*.5f});
-    dl->PathLineTo({c.x-r*.12f,c.y+hh});
-    dl->PathFillConvex(col);
-    dl->PathArcTo({c.x+r*.15f,c.y},r*.55f,-3.14f*.4f,3.14f*.4f,8);
-    dl->PathStroke(col,false,1.2f);
+    float hw=r*.4f,hh=r*.6f;
+    dl->AddTriangleFilled({c.x-r,c.y-hh},{c.x-r,c.y+hh},{c.x-r*.1f,c.y},col);
+    dl->AddRectFilled({c.x-r*.1f,c.y-hh*.4f},{c.x,c.y+hh*.4f},col,0.f);
+    float x0=c.x+r*.08f;
+    dl->PathArcTo({x0,c.y},r*.5f,-0.6f,0.6f,8); dl->PathStroke(col,false,1.3f);
+    dl->PathArcTo({x0,c.y},r*.85f,-0.7f,0.7f,8); dl->PathStroke(col,false,1.3f);
 }
 static void IconFullscreen(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 {
-    float s=r*.6f,d=r*.25f;
-    float lx=c.x-s,rx=c.x+s,ty=c.y-s,by=c.y+s;
-    dl->AddLine({lx,ty},{lx+d,ty},col,1.3f); dl->AddLine({lx,ty},{lx,ty+d},col,1.3f);
-    dl->AddLine({rx,ty},{rx-d,ty},col,1.3f); dl->AddLine({rx,ty},{rx,ty+d},col,1.3f);
-    dl->AddLine({lx,by},{lx+d,by},col,1.3f); dl->AddLine({lx,by},{lx,by-d},col,1.3f);
-    dl->AddLine({rx,by},{rx-d,by},col,1.3f); dl->AddLine({rx,by},{rx,by-d},col,1.3f);
+    float s=r*.65f,t=r*.25f;
+    auto corner=[&](float sx,float sy){
+        dl->AddLine({c.x+sx*s,c.y+sy*s},{c.x+sx*(s-t),c.y+sy*s},col,1.3f);
+        dl->AddLine({c.x+sx*s,c.y+sy*s},{c.x+sx*s,c.y+sy*(s-t)},col,1.3f);
+    };
+    corner(-1,-1); corner(1,-1); corner(-1,1); corner(1,1);
 }
 static void IconShare(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 {
-    dl->AddCircle({c.x+r*.6f,c.y-r*.55f},r*.22f,col,0,1.3f);
-    dl->AddCircle({c.x+r*.6f,c.y+r*.55f},r*.22f,col,0,1.3f);
-    dl->AddCircle({c.x-r*.6f,c.y},r*.22f,col,0,1.3f);
-    dl->AddLine({c.x-r*.4f,c.y},{c.x+r*.4f,c.y-r*.5f},col,1.3f);
-    dl->AddLine({c.x-r*.4f,c.y},{c.x+r*.4f,c.y+r*.5f},col,1.3f);
+    float nx=c.x-r*.3f;
+    dl->AddCircleFilled({c.x+r*.5f,c.y-r*.5f},r*.22f,col,8);
+    dl->AddCircleFilled({c.x+r*.5f,c.y+r*.5f},r*.22f,col,8);
+    dl->AddCircleFilled({c.x-r*.5f,c.y},r*.22f,col,8);
+    dl->AddLine({c.x-r*.5f,c.y},{c.x+r*.5f,c.y-r*.5f},col,1.2f);
+    dl->AddLine({c.x-r*.5f,c.y},{c.x+r*.5f,c.y+r*.5f},col,1.2f);
+    (void)nx;
 }
 static void IconDownload(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 {
-    // Arrow shaft pointing down
-    float hw=r*.32f;
-    dl->AddLine({c.x,c.y-r*.6f},{c.x,c.y+r*.05f},col,1.4f);
-    // Arrowhead
-    dl->AddLine({c.x,c.y+r*.05f},{c.x-hw,c.y-r*.2f},col,1.4f);
-    dl->AddLine({c.x,c.y+r*.05f},{c.x+hw,c.y-r*.2f},col,1.4f);
-    // Base line
-    dl->AddLine({c.x-r*.55f,c.y+r*.5f},{c.x+r*.55f,c.y+r*.5f},col,1.4f);
+    float hw=r*.35f,top=c.y-r*.6f,bot=c.y+r*.1f;
+    dl->AddLine({c.x,top},{c.x,bot},col,1.4f);
+    dl->AddTriangleFilled({c.x-hw,bot},{c.x+hw,bot},{c.x,bot+r*.5f},col);
+    dl->AddLine({c.x-r*.7f,c.y+r*.7f},{c.x+r*.7f,c.y+r*.7f},col,1.4f);
 }
 static void IconDots(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 {
-    float rr=r*.18f;
-    dl->AddCircleFilled({c.x-r*.6f,c.y},rr,col);
-    dl->AddCircleFilled(c,rr,col);
-    dl->AddCircleFilled({c.x+r*.6f,c.y},rr,col);
+    float sp=r*.5f,dr=r*.18f;
+    dl->AddCircleFilled({c.x-sp,c.y},dr,col,6);
+    dl->AddCircleFilled({c.x,   c.y},dr,col,6);
+    dl->AddCircleFilled({c.x+sp,c.y},dr,col,6);
 }
 static void IconThumbUp(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 {
-    float hw=r*.45f,hh=r*.55f;
-    ImVec2 pts[6]={{c.x-hw,c.y+hh},{c.x-hw,c.y},{c.x-hw*.2f,c.y-hh*.1f},
-                   {c.x+hw*.3f,c.y-hh},{c.x+hw,c.y-hh*.3f},{c.x+hw,c.y+hh}};
-    for(int i=0;i<6;i++) dl->PathLineTo(pts[i]);
+    float hw=r,hh=r*.8f,stem=r*.45f;
+    dl->PathLineTo({c.x-hw,c.y+hh});
+    dl->PathLineTo({c.x-hw,c.y});
+    dl->PathLineTo({c.x-hw*.3f,c.y-hh});
+    dl->PathLineTo({c.x+hw*.5f,c.y-hh});
+    dl->PathLineTo({c.x+hw,c.y-hh*.3f});
+    dl->PathLineTo({c.x+hw*.7f,c.y+hh*.2f});
+    dl->PathLineTo({c.x,c.y+hh*.2f});
+    dl->PathLineTo({c.x,c.y+hh});
     dl->PathStroke(col,true,1.3f);
-    dl->AddRectFilled({c.x-hw,c.y+hh*.1f},{c.x-hw+r*.22f,c.y+hh},col,1.f);
+    dl->AddRectFilled({c.x-hw,c.y-hh*.1f},{c.x-hw+r*.22f,c.y-hh*.1f+r*.1f},col,1.f);
 }
 static void IconThumbDown(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 {
-    float hw=r*.45f,hh=r*.55f;
-    ImVec2 pts[6]={{c.x-hw,c.y-hh},{c.x-hw,c.y},{c.x-hw*.2f,c.y+hh*.1f},
-                   {c.x+hw*.3f,c.y+hh},{c.x+hw,c.y+hh*.3f},{c.x+hw,c.y-hh}};
-    for(int i=0;i<6;i++) dl->PathLineTo(pts[i]);
+    float hw=r,hh=r*.8f;
+    dl->PathLineTo({c.x-hw,c.y-hh});
+    dl->PathLineTo({c.x-hw,c.y});
+    dl->PathLineTo({c.x-hw*.3f,c.y+hh});
+    dl->PathLineTo({c.x+hw*.5f,c.y+hh});
+    dl->PathLineTo({c.x+hw,c.y+hh*.3f});
+    dl->PathLineTo({c.x+hw*.7f,c.y-hh*.2f});
+    dl->PathLineTo({c.x,c.y-hh*.2f});
+    dl->PathLineTo({c.x,c.y-hh});
     dl->PathStroke(col,true,1.3f);
-    dl->AddRectFilled({c.x-hw,c.y-hh},{c.x-hw+r*.22f,c.y-hh*.1f},col,1.f);
+    dl->AddRectFilled({c.x-hw,c.y+hh*.1f},{c.x-hw+r*.22f,c.y+hh*.1f-r*.1f},col,1.f);
 }
 
-// FIX: IconSkip — arc radius r*.65f fills the button well at any r.
-//      "10" label centred inside the arc circle at (c), not at arc tip.
-static void IconSkip(ImDrawList* dl,ImVec2 c,float r,ImU32 col,bool forward)
+// IconSkip — standard "circular arrow + number" media icon.
+// Open circle arc (~280°) with a filled arrowhead at the open end,
+// and the number "10" centred inside the arc ring.
+// forward=true  → clockwise arc, arrowhead points right  (+10s)
+// forward=false → counter-clockwise arc, arrowhead points left (-10s)
+static void IconSkip(ImDrawList* dl, ImVec2 c, float r, ImU32 col, bool forward)
 {
+    const float PI   = 3.14159265f;
+    const float arcR = r * 0.82f;  // arc radius
+
+    // Arc: ~280° sweep.  For +10 the arc runs clockwise from ~+32° back to ~-32°
+    // (leaving a ~80° gap at the top-right).  For -10 it mirrors horizontally.
+    // ImGui PathArcTo draws CCW when a_min < a_max.
+    // We want a CW arc for forward and CCW for backward — just swap the angles:
+    //   fwd:  from  PI*1.82  to  PI*(-0.18)   → winds ~280° CW (passes through bottom)
+    //   bwd:  from  PI*0.18  to  PI*2.18       → winds ~280° CCW (mirrors fwd)
     if(forward){
-        dl->PathArcTo(c,r*.65f,3.14f*0.3f,3.14f*2.3f,14);
+        dl->PathArcTo(c, arcR,  PI*1.82f,  -PI*0.18f, 20);
     } else {
-        dl->PathArcTo(c,r*.65f,3.14f*2.7f,3.14f*0.7f+3.14f*2.f,14);
+        dl->PathArcTo(c, arcR,  PI*0.18f,   PI*2.18f, 20);
     }
-    dl->PathStroke(col,false,1.4f);
-    float ang = forward ? (3.14f*2.3f) : (3.14f*2.7f);
-    float ax = c.x + r*.65f * cosf(ang);
-    float ay = c.y + r*.65f * sinf(ang);
-    float as2 = r*.25f;
-    ImVec2 tip={ax,ay};
-    ImVec2 p1={ax+as2*cosf(ang+3.14f*0.7f),ay+as2*sinf(ang+3.14f*0.7f)};
-    ImVec2 p2={ax+as2*cosf(ang-3.14f*0.7f),ay+as2*sinf(ang-3.14f*0.7f)};
-    dl->AddTriangleFilled(tip,p1,p2,col);
-    const char* num="10";
-    ImVec2 ns=TS(num);
-    dl->AddText(g_font13,13.f,{c.x-ns.x*.5f,c.y-ns.y*.5f+r*.05f},col,num);
+    dl->PathStroke(col, false, 1.5f);
+
+    // Arrowhead: sits at the open end of the arc.
+    // fwd end angle = -PI*0.18 (~-32°), bwd end angle = PI*0.18 (~+32°)
+    float tipAng  = forward ? (-PI * 0.18f) : (PI * 0.18f);
+    // Tangent at the tip, oriented in the direction the arc was travelling:
+    //   fwd arc travels CW  → tangent points  "downward-right" at the end  = tipAng - PI/2
+    //   bwd arc travels CCW → tangent points  "downward-left"  at the end  = tipAng + PI/2
+    float tangAng = forward ? (tipAng - PI * 0.5f) : (tipAng + PI * 0.5f);
+    float tx = c.x + arcR * cosf(tipAng);
+    float ty = c.y + arcR * sinf(tipAng);
+    float hs = r * 0.30f;  // arrowhead half-size
+    ImVec2 tip = {tx, ty};
+    ImVec2 lft = {tx + hs*cosf(tangAng + PI*0.68f), ty + hs*sinf(tangAng + PI*0.68f)};
+    ImVec2 rgt = {tx + hs*cosf(tangAng - PI*0.68f), ty + hs*sinf(tangAng - PI*0.68f)};
+    dl->AddTriangleFilled(tip, lft, rgt, col);
+
+    // "10" centred inside the arc circle, shifted slightly toward the closed side
+    const char* num = "10";
+    ImVec2 ns = TS(num);
+    float offX = forward ? -r * 0.04f : r * 0.04f;
+    dl->AddText(g_font13, 13.f,
+        {c.x - ns.x * 0.5f + offX, c.y - ns.y * 0.5f + r * 0.04f},
+        col, num);
 }
 
 // ─── seekbar / volbar ─────────────────────────────────────────
@@ -389,14 +395,21 @@ static bool SeekBar(ImDrawList* dl,ImVec2 pos,float width,float height,
         if(*val<0.f)*val=0.f; if(*val>1.f)*val=1.f;
         changed=true;
     }
-    float cy  = pos.y + height * .5f;
-    float rh  = (hov||act) ? 5.f : 3.f;
-    float ry  = cy - rh * .5f;
-    dl->AddRectFilled({railX0,ry},{railX0+railW,         ry+rh},cRail,rh*.5f);
-    dl->AddRectFilled({railX0,ry},{railX0+railW*buf,     ry+rh},cBuf, rh*.5f);
-    dl->AddRectFilled({railX0,ry},{railX0+railW*(*val),  ry+rh},cFill,rh*.5f);
+
+    float fillW = railW * (*val);
+    float bufW  = railW * buf;
+    float cy    = pos.y + height * .5f;
+    float rh    = 3.f, ry = cy - rh * .5f;
+
+    // Rail
+    dl->AddRectFilled({railX0,ry},{railX0+railW,ry+rh},cRail,2.f);
+    // Buffer
+    dl->AddRectFilled({railX0,ry},{railX0+bufW, ry+rh},cBuf, 2.f);
+    // Fill
+    dl->AddRectFilled({railX0,ry},{railX0+fillW,ry+rh},cFill,2.f);
+    // Thumb
     if(hov||act){
-        float tx = railX0 + railW * (*val);
+        float tx=railX0+fillW;
         dl->AddCircleFilled({tx,cy},5.5f,cThumb);
     }
     return changed;
@@ -406,13 +419,12 @@ static bool VolBar(ImDrawList* dl,ImVec2 pos,float width,float height,float* val
 {
     ImGui::SetCursorScreenPos(pos);
     ImGui::InvisibleButton("##vol",{width,height});
-    bool act=ImGui::IsItemActive();
     bool hov=ImGui::IsItemHovered();
-    bool changed=false;
+    bool act=ImGui::IsItemActive();
 
-    // FIX: add matching padX so the thumb circle at val=0 does not
-    // paint at the raw left edge of the widget (was missing entirely).
-    const float padX   = 5.f;
+    // FIX: same 8px padding applied to VolBar so thumb at val=0 doesn't
+    // paint at the raw left edge of the widget.
+    const float padX   = 8.f;
     const float railX0 = pos.x + padX;
     const float railW  = width - padX * 2.f;
 
@@ -420,251 +432,112 @@ static bool VolBar(ImDrawList* dl,ImVec2 pos,float width,float height,float* val
         float mx=ImGui::GetIO().MousePos.x;
         *val=(mx - railX0) / railW;
         if(*val<0.f)*val=0.f; if(*val>1.f)*val=1.f;
-        changed=true;
     }
+    float fillW=railW*(*val);
     float cy=pos.y+height*.5f;
     float rh=3.f,ry=cy-rh*.5f;
-    dl->AddRectFilled({railX0,ry},{railX0+railW,         ry+rh},C_SURFACE3,rh*.5f);
-    dl->AddRectFilled({railX0,ry},{railX0+railW*(*val),  ry+rh},C_ACCENT,  rh*.5f);
+    dl->AddRectFilled({railX0,ry},{railX0+railW,ry+rh},COL32(255,255,255,25),2.f);
+    dl->AddRectFilled({railX0,ry},{railX0+fillW, ry+rh},C_TEXT,2.f);
     if(hov||act){
-        float tx=railX0+railW*(*val);
+        float tx=railX0+fillW;
         dl->AddCircleFilled({tx,cy},5.f,C_TEXT);
     }
-    return changed;
+    return act;
 }
 
-// ─── IconBtn ─────────────────────────────────────────────────
-static bool IconBtn(const char* id,ImVec2 pos,float size)
+static bool IconBtn(const char* id,ImVec2 pos,float sz)
 {
     ImGui::SetCursorScreenPos(pos);
-    ImGui::InvisibleButton(id,{size,size});
-    if(ImGui::IsItemHovered()){
-        ImGui::GetWindowDrawList()->AddRectFilled(
-            pos,{pos.x+size,pos.y+size},COL32(255,255,255,20),4.f);
-    }
-    return ImGui::IsItemActivated();
-}
-
-static bool TabBtn(ImDrawList* dl,const char* label,ImVec2 pos,bool active)
-{
-    ImVec2 ts=TS(label);
-    float padX=12.f,h=26.f,w=ts.x+padX*2;
-    ImGui::SetCursorScreenPos(pos);
-    ImGui::InvisibleButton(label,{w,h});
+    ImGui::InvisibleButton(id,{sz,sz});
     bool hov=ImGui::IsItemHovered();
-    if(active){
-        dl->AddRectFilled(pos,{pos.x+w,pos.y+h},C_ACCENT,5.f);
-        dl->AddRect(pos,{pos.x+w,pos.y+h},C_ACCENT,5.f,0,1.f);
-        Txt(dl,{pos.x+padX,pos.y+(h-ts.y)*.5f},C_WHITE,label);
-    } else {
-        ImU32 bg=hov?C_SURFACE3:C_SURFACE2;
-        dl->AddRectFilled(pos,{pos.x+w,pos.y+h},bg,5.f);
-        dl->AddRect(pos,{pos.x+w,pos.y+h},C_BORDER,5.f,0,1.f);
-        Txt(dl,{pos.x+padX,pos.y+(h-ts.y)*.5f},hov?C_TEXT:C_TEXT_MUTED,label);
+    if(hov){
+        ImGui::GetWindowDrawList()->AddRectFilled(pos,{pos.x+sz,pos.y+sz},
+            COL32(255,255,255,20),4.f);
     }
     return ImGui::IsItemActivated();
 }
 
-// ─── logo drawing ────────────────────────────────────────────
-static void DrawLogoArea(ImDrawList* dl, ImVec2 pos, float availH)
-{
-    if(g_logoTex && g_logoTexW > 0 && g_logoTexH > 0){
-        float scale = availH / (float)g_logoTexH;
-        float dstW  = (float)g_logoTexW * scale;
-        if(dstW > 140.f){ scale = 140.f / (float)g_logoTexW; dstW = 140.f; }
-        float dstH  = (float)g_logoTexH * scale;
-        float yOff  = (availH - dstH) * 0.5f;
-        dl->AddImage((ImTextureID)(intptr_t)g_logoTex,
-            {pos.x, pos.y + yOff}, {pos.x+dstW, pos.y+yOff+dstH},
-            {0,0}, {1,1}, C_WHITE);
-        ImGui::SetCursorScreenPos(pos);
-        ImGui::InvisibleButton("##logo",{dstW,availH});
-    } else {
-        // Vector fallback
-        float r  = availH * 0.45f;
-        ImVec2 c = {pos.x + r + 2.f, pos.y + availH * 0.5f};
-        dl->AddCircle(c, r, C_ACCENT, 0, 1.5f);
-        float r5 = r * 0.55f;
-        int   nd = 8;
-        float da = 3.14159f*2.f/(float)(nd*2);
-        for(int i=0;i<nd;i++){
-            float a0=(float)i*2.f*da, a1=a0+da*0.85f;
-            dl->PathArcTo(c,r5,a0,a1,4);
-            dl->PathStroke(C_ACCENT,false,1.f);
-        }
-        dl->AddCircleFilled(c, r*0.22f, C_ACCENT);
-        float lw=1.5f, tick=r*0.2f;
-        dl->AddLine({c.x,c.y-r},{c.x,c.y-r+tick},C_ACCENT,lw);
-        dl->AddLine({c.x,c.y+r-tick},{c.x,c.y+r},C_ACCENT,lw);
-        dl->AddLine({c.x-r,c.y},{c.x-r+tick,c.y},C_ACCENT,lw);
-        dl->AddLine({c.x+r-tick,c.y},{c.x+r,c.y},C_ACCENT,lw);
-        ImGui::SetCursorScreenPos(pos);
-        ImGui::InvisibleButton("##logo",{r*2.f+4.f,availH});
-    }
-}
-
-// ─── now-playing card ────────────────────────────────────────
-static void DrawNowPlayingCard(ImDrawList* dl, ImVec2 pos, float w)
-{
-    const float cardH  = 68.f;
-    const float padL   = 5.f+3.f;
-    const float padR   = 8.f;
-    const float padT   = 8.f;
-    const float thumbW = 80.f;
-    const float thumbH = 45.f;
-
-    dl->AddRectFilled(pos,{pos.x+w,pos.y+cardH},COL32(78,168,168,20));
-    dl->AddRectFilled(pos,{pos.x+3.f,pos.y+cardH},C_ACCENT);
-    dl->AddLine({pos.x,pos.y+cardH},{pos.x+w,pos.y+cardH},COL32(78,168,168,46),1.f);
-
-    float tx=pos.x+padL, ty=pos.y+padT;
-    dl->AddRectFilled({tx,ty},{tx+thumbW,ty+thumbH},g_related[0].grad,3.f);
-    dl->AddRectFilled({tx,ty},{tx+thumbW,ty+thumbH},COL32(78,168,168,25),3.f);
-    ImVec2 cc={tx+thumbW*.5f,ty+thumbH*.5f};
-    dl->AddCircleFilled(cc,11.f,COL32(0,0,0,120));
-    IconPlay(dl,cc,6.f,C_ACCENT);
-
-    float ix=tx+thumbW+8.f;
-    float iw=w-padL-thumbW-8.f-padR;
-    float iy=pos.y+padT;
-
-    dl->PushClipRect({ix,pos.y},{pos.x+w-padR,pos.y+cardH},true);
-    const char* badge="NOW PLAYING";
-    ImVec2 bsz=TS(badge);
-    Txt(dl,{ix,iy},C_ACCENT,badge);
-    iy+=bsz.y+2.f;
-    Txt(dl,{ix,iy},C_TEXT,g_related[0].title,iw);
-    ImVec2 tsz=TS(g_related[0].title,iw);
-    iy+=tsz.y+4.f;
-    Txt(dl,{ix,iy},C_TEXT_FAINT,g_related[0].channel);
-    dl->PopClipRect();
-}
-
-// ─── related item ────────────────────────────────────────────
-static void DrawRelatedItem(ImDrawList* dl,ImVec2 pos,float w,const RelItem& item,int)
-{
-    const float thumbW=100.f,thumbH=56.f;
-    const float padT=8.f,padL=8.f,padR=8.f;
-    const float itemH=thumbH+padT*2.f;
-
-    float tx=pos.x+padL, ty=pos.y+padT;
-    dl->AddRectFilled({tx,ty},{tx+thumbW,ty+thumbH},item.grad,3.f);
-    ImVec2 ds=TS(item.dur);
-    float bx=tx+thumbW-ds.x-7.f, by2=ty+thumbH-14.f;
-    dl->AddRectFilled({bx-3.f,by2},{tx+thumbW-3.f,by2+12.f},COL32(0,0,0,200),2.f);
-    Txt(dl,{bx,by2+1.f},C_TEXT,item.dur);
-
-    float ix=tx+thumbW+8.f;
-    float iw=w-padL-thumbW-8.f-padR;
-    float iy=pos.y+padT;
-
-    dl->PushClipRect({ix,pos.y},{pos.x+w-padR,pos.y+itemH},true);
-    Txt(dl,{ix,iy},C_TEXT,item.title,iw);
-    ImVec2 titSz=TS(item.title,iw);
-    float titleH=titSz.y; if(titleH>13.f*2.f+4.f) titleH=13.f*2.f+4.f;
-    iy+=titleH+4.f;
-    Txt(dl,{ix,iy},C_TEXT_MUTED,item.channel);
-    ImVec2 chSz=TS(item.channel);
-    iy+=chSz.y+2.f;
-    Txt(dl,{ix,iy},C_TEXT_FAINT,item.views);
-    dl->PopClipRect();
-
-    dl->AddLine({pos.x+padL,pos.y+itemH-1.f},{pos.x+w-padR,pos.y+itemH-1.f},C_BORDER,1.f);
-}
+// ─── logo sprite helpers ──────────────────────────────────────
+#include "logo_sprite.h"
 
 // ─── titlebar ────────────────────────────────────────────────
 static void DrawTitlebar(ImDrawList* dl,ImVec2 pos,float w)
 {
-    float h=38.f;
+    const float h=38.f;
     RectFill(dl,pos,{w,h},C_SURFACE);
+    dl->AddLine(pos,{pos.x+w,pos.y},C_BORDER,1.f);
     dl->AddLine({pos.x,pos.y+h},{pos.x+w,pos.y+h},C_BORDER,1.f);
 
-    float cy=pos.y+h*.5f;
-    float x =pos.x+8.f;
-
-    // ── Logo ────────────────────────────────────────────────
-    // FIX: logoAreaH was (h - 2) = 36px which, combined with the
-    // 140px max-width cap in DrawLogoArea, produced a tiny logo
-    // because scale was driven by height alone.  By giving the logo
-    // area the full titlebar height (h) the width cap is reached
-    // first for typical wide logos, yielding a properly-sized image.
-    // A 1px vertical margin is kept via logoAreaY = pos.y + 1.
-    const float logoAreaH = h;          // was: h - 2.f
-    const float logoAreaY = pos.y + 1.f;
-    DrawLogoArea(dl, {x, logoAreaY}, logoAreaH);
-    if(g_logoTex && g_logoTexH > 0){
-        float scale = logoAreaH / (float)g_logoTexH;
-        float dstW  = (float)g_logoTexW * scale;
-        if(dstW > 140.f) dstW = 140.f;
-        x += dstW + 12.f;
+    // ── Logo (left) ───────────────────────────────────────────
+    if(g_logoTex && g_logoTexW>0 && g_logoTexH>0){
+        // Fit the logo PNG into the titlebar, capped at 140px wide.
+        // Use a taller logoAreaH so the PNG is constrained by width
+        // rather than height — giving a properly sized logo in the bar.
+        float logoAreaH = h + 16.f;
+        float logoAreaY = pos.y + (h - logoAreaH) * 0.5f;
+        float aspect    = (float)g_logoTexW / (float)g_logoTexH;
+        float dstW      = logoAreaH * aspect;
+        if(dstW > 140.f){ dstW = 140.f; logoAreaH = dstW / aspect; logoAreaY = pos.y+(h-logoAreaH)*.5f; }
+        float logoX = pos.x + 8.f;
+        float logoY = logoAreaY;
+        ImGui::SetCursorScreenPos({logoX, pos.y});
+        ImGui::InvisibleButton("##logo",{dstW,h});
+        dl->AddImage((ImTextureID)(uintptr_t)g_logoTex,
+            {logoX,logoY},{logoX+dstW,logoY+logoAreaH});
     } else {
-        x += logoAreaH + 12.f;
+        // Fallback: animated logo sprite
+        float r=10.f;
+        float logoX=pos.x+r+8.f, logoY=pos.y+h*.5f;
+        ImGui::SetCursorScreenPos({logoX-r-4.f, pos.y});
+        ImGui::InvisibleButton("##logo",{r*2.f+4.f,h});
+        DrawLogoSprite(dl,{logoX,logoY},r,C_ACCENT,
+            (float)ImGui::GetTime());
     }
 
-    {
-        float btnSz=28.f, by=cy-btnSz*.5f;
-        ImGui::SetCursorScreenPos({x,by});
-        ImGui::InvisibleButton("##navback",{btnSz,btnSz});
-        bool hovB=ImGui::IsItemHovered();
-        if(hovB) dl->AddRectFilled({x,by},{x+btnSz,by+btnSz},C_SURFACE3,4.f);
-        dl->AddLine({x+btnSz*.58f,cy-4.f},{x+btnSz*.38f,cy},C_TEXT_MUTED,1.5f);
-        dl->AddLine({x+btnSz*.38f,cy},{x+btnSz*.58f,cy+4.f},C_TEXT_MUTED,1.5f);
-        x+=btnSz+2.f;
-        ImGui::SetCursorScreenPos({x,by});
-        ImGui::InvisibleButton("##navfwd",{btnSz,btnSz});
-        bool hovF=ImGui::IsItemHovered();
-        if(hovF) dl->AddRectFilled({x,by},{x+btnSz,by+btnSz},C_SURFACE3,4.f);
-        dl->AddLine({x+btnSz*.42f,cy-4.f},{x+btnSz*.62f,cy},C_TEXT_MUTED,1.5f);
-        dl->AddLine({x+btnSz*.62f,cy},{x+btnSz*.42f,cy+4.f},C_TEXT_MUTED,1.5f);
-        x+=btnSz+8.f;
-    }
+    // ── Nav tabs (centre) ─────────────────────────────────────
+    const char* navs[]={"Home","Explore","Library","History"};
+    const int nNavs=4;
+    float totalW=0.f;
+    for(int i=0;i<nNavs;i++) totalW+=TS(navs[i]).x+24.f;
+    float nx=pos.x+(w-totalW)*.5f;
+    float cy=pos.y+h*.5f;
 
-    {
-        const char* navs[]={"Home","Trending","Library","History"};
-        for(int i=0;i<4;i++){
-            ImVec2 ts2=TS(navs[i]);
-            float tw=ts2.x+8.f;
-            ImGui::SetCursorScreenPos({x,pos.y+6.f});
-            char navId[32]; snprintf(navId,sizeof(navId),"##nav%d",i);
-            ImGui::InvisibleButton(navId,{tw,h-6.f});
-            bool hov=ImGui::IsItemHovered();
-            ImU32 tc=(i==0)?C_TEXT:(hov?C_TEXT:C_TEXT_MUTED);
-            Txt(dl,{x,cy-ts2.y*.5f},tc,navs[i]);
-            if(i==0) dl->AddRectFilled({x,pos.y+h-2.f},{x+ts2.x,pos.y+h},C_ACCENT);
-            x+=tw+4.f;
+    for(int i=0;i<nNavs;i++){
+        ImVec2 ts=TS(navs[i]);
+        float tw=ts.x+24.f;
+        bool sel=(i==g_tab);
+        ImU32 tc=sel?C_TEXT:C_TEXT_MUTED;
+        ImGui::SetCursorScreenPos({nx,pos.y+3.f});
+        const char* navId=(i==0?"##nav0":i==1?"##nav1":i==2?"##nav2":"##nav3");
+        if(ImGui::InvisibleButton(navId,{tw,h-6.f})) g_tab=i;
+        if(ImGui::IsItemHovered()&&!sel) tc=C_TEXT;
+        Txt(dl,{nx+(tw-ts.x)*.5f,cy-ts.y*.5f},tc,navs[i]);
+        if(sel){
+            dl->AddRectFilled({nx+4.f,pos.y+h-3.f},{nx+tw-4.f,pos.y+h},C_ACCENT,2.f);
         }
+        nx+=tw;
     }
 
-    float rightPad=12.f, settingsSz=28.f, searchW=160.f, searchH=26.f;
-    float searchX=pos.x+w-rightPad-settingsSz-4.f-searchW;
+    // ── Search bar (right) ────────────────────────────────────
+    float searchH=26.f, searchW=180.f;
+    float searchX=pos.x+w-searchW-10.f;
     float searchY=cy-searchH*.5f;
-    RectFill(dl,{searchX,searchY},{searchW,searchH},C_SURFACE3,5.f);
+    RectFill(dl,{searchX,searchY},{searchW,searchH},C_SURFACE2,5.f);
     Rect(dl,{searchX,searchY},{searchW,searchH},C_BORDER,5.f);
-    ImVec2 pt=TS(g_search);
-    Txt(dl,{searchX+8.f,searchY+(searchH-pt.y)*.5f},C_TEXT_FAINT,g_search);
-    float sbW=52.f, sbX=searchX+searchW-sbW;
-    dl->AddRectFilled({sbX,searchY+1.f},{searchX+searchW-1.f,searchY+searchH-1.f},C_ACCENT,4.f);
-    const char* srchLbl="Search";
-    ImVec2 sl=TS(srchLbl);
-    Txt(dl,{sbX+(sbW-sl.x)*.5f,searchY+(searchH-sl.y)*.5f},C_WHITE,srchLbl);
+    ImGui::SetCursorScreenPos({searchX+8.f,searchY+3.f});
+    ImGui::SetNextItemWidth(searchW-18.f);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg,IM_COL32(0,0,0,0));
+    ImGui::PushStyleColor(ImGuiCol_Text,IM_COL32(0xE6,0xED,0xF2,255));
+    ImGui::InputText("##search",g_search,sizeof(g_search));
+    ImGui::PopStyleColor(2);
 
-    float sx2=pos.x+w-rightPad-settingsSz, sy2=cy-settingsSz*.5f;
+    // ── Settings dots (far right) ─────────────────────────────
+    float settingsSz=24.f;
+    float sx2=pos.x+w-settingsSz*.5f-4.f, sy2=cy-settingsSz*.5f;
     ImGui::SetCursorScreenPos({sx2,sy2});
     ImGui::InvisibleButton("##settings",{settingsSz,settingsSz});
-    bool sHov=ImGui::IsItemHovered();
-    if(sHov) dl->AddRectFilled({sx2,sy2},{sx2+settingsSz,sy2+settingsSz},C_SURFACE3,4.f);
-    IconDots(dl,{sx2+settingsSz*.5f,cy},7.f,C_TEXT_MUTED);
-}
-
-// ─── video area ──────────────────────────────────────────────
-static void DrawVideoArea(ImDrawList* dl,ImVec2 pos,float w,float h)
-{
-    RectFill(dl,pos,{w,h},C_BLACK);
-    dl->AddRectFilledMultiColor(pos,{pos.x+w,pos.y+h},
-        COL32(0,0,0,0),COL32(0,0,0,0),COL32(0,0,0,160),COL32(0,0,0,160));
-    ImVec2 cc={pos.x+w*.5f,pos.y+h*.5f};
-    dl->AddCircle(cc,28.f,COL32(78,168,168,38),0,1.f);
-    IconPlay(dl,cc,14.f,COL32(78,168,168,38));
+    bool shov=ImGui::IsItemHovered();
+    IconDots(dl,{sx2+settingsSz*.5f,cy},7.f,shov?C_TEXT:C_TEXT_MUTED);
 }
 
 // ─── controls bar ────────────────────────────────────────────
@@ -798,294 +671,309 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
 {
     const float h=46.f,btnH=30.f,iconR=6.5f,padLR=10.f,gap=4.f;
     RectFill(dl,pos,{w,h},C_SURFACE);
-    dl->AddLine({pos.x,pos.y},{pos.x+w,pos.y},C_BORDER,1.f);
-    dl->AddLine({pos.x,pos.y+h},{pos.x+w,pos.y+h},C_BORDER,1.f);
+    dl->AddLine(pos,{pos.x+w,pos.y},C_BORDER,1.f);
+
+    float x=pos.x+10.f;
     const float cy=pos.y+h*.5f, by=cy-btnH*.5f;
-    float x=pos.x+12.f;
+
     ImDrawList* wdl=ImGui::GetWindowDrawList();
 
+    // Like pill  ── thumb-up icon  |  count ────────────────────
     {
-        const char* cnt="248K";
-        ImVec2 cs=TS(cnt);
-        float pillW=padLR+iconR*2.f+4.f+1.f+4.f+cs.x+padLR;
+        float divX, pillW;
+        {
+            ImVec2 cs=TS("24K");
+            pillW=padLR+iconR*2.f+6.f+cs.x+padLR+gap+padLR+iconR*2.f+padLR;
+            divX=x+padLR+iconR*2.f+6.f+cs.x+padLR;
+        }
+        ImVec2 cs=TS("24K");
+        pillW=padLR+iconR*2.f+6.f+cs.x+padLR;
         ImGui::SetCursorScreenPos({x,by});
         ImGui::InvisibleButton("##like",{pillW,btnH});
         bool hov=ImGui::IsItemHovered();
-        ImU32 bg=hov?C_ACCENT_SOFT:COL32(78,168,168,20);
+        ImU32 bg=hov?C_ACCENT_SOFT:COL32(0,0,0,0);
         wdl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
         wdl->AddRect({x,by},{x+pillW,by+btnH},hov?C_ACCENT:C_ACCENT_LINE,8.f,0,1.f);
         float iconCX=x+padLR+iconR;
         IconThumbUp(wdl,{iconCX,cy},iconR,C_ACCENT);
-        float divX=iconCX+iconR+4.f;
+        divX=x+padLR+iconR*2.f+6.f;
         wdl->AddLine({divX,by+6.f},{divX,by+btnH-6.f},C_ACCENT_LINE,1.f);
         Txt(wdl,{divX+4.f,cy-cs.y*.5f},C_ACCENT,cnt);
         x+=pillW+gap;
     }
+
+    // Dislike pill ─────────────────────────────────────────────
     {
-        const char* lbl="Dislike"; ImVec2 ls=TS(lbl);
+        const char* lbl="Dislike";
+        ImVec2 ls=TS(lbl);
         float pillW=padLR+iconR*2.f+6.f+ls.x+padLR;
         ImGui::SetCursorScreenPos({x,by}); ImGui::InvisibleButton("##dis",{pillW,btnH});
         bool hov=ImGui::IsItemHovered();
-        ImU32 bg=hov?COL32(255,255,255,18):COL32(255,255,255,8);
+        ImU32 bg=hov?COL32(255,255,255,15):COL32(0,0,0,0);
         wdl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
         wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
         IconThumbDown(wdl,{x+padLR+iconR,cy},iconR,hov?C_ERROR:C_TEXT_MUTED);
         Txt(wdl,{x+padLR+iconR*2.f+6.f,cy-ls.y*.5f},hov?C_TEXT:C_TEXT_MUTED,lbl);
         x+=pillW+gap;
     }
+
     wdl->AddLine({x+2.f,by+6.f},{x+2.f,by+btnH-6.f},C_BORDER,1.f); x+=8.f;
+
+    // Share pill ───────────────────────────────────────────────
     {
-        const char* lbl="Share"; ImVec2 ls=TS(lbl);
+        const char* lbl="Share";
+        ImVec2 ls=TS(lbl);
         float pillW=padLR+iconR*2.f+6.f+ls.x+padLR;
         ImGui::SetCursorScreenPos({x,by}); ImGui::InvisibleButton("##shr",{pillW,btnH});
         bool hov=ImGui::IsItemHovered();
-        ImU32 bg=hov?COL32(255,255,255,18):COL32(255,255,255,8);
+        ImU32 bg=hov?COL32(255,255,255,15):COL32(0,0,0,0);
         wdl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
         wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
         IconShare(wdl,{x+padLR+iconR,cy},iconR,hov?C_TEXT:C_TEXT_MUTED);
         Txt(wdl,{x+padLR+iconR*2.f+6.f,cy-ls.y*.5f},hov?C_TEXT:C_TEXT_MUTED,lbl);
         x+=pillW+gap;
     }
+
+    // Download pill ────────────────────────────────────────────
     {
-        const char* lbl="Download"; ImVec2 ls=TS(lbl);
+        const char* lbl="Download";
+        ImVec2 ls=TS(lbl);
         float pillW=padLR+iconR*2.f+6.f+ls.x+padLR;
         ImGui::SetCursorScreenPos({x,by}); ImGui::InvisibleButton("##dl",{pillW,btnH});
         bool hov=ImGui::IsItemHovered();
-        ImU32 bg=hov?COL32(255,255,255,18):COL32(255,255,255,8);
+        ImU32 bg=hov?COL32(255,255,255,15):COL32(0,0,0,0);
         wdl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
         wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
         IconDownload(wdl,{x+padLR+iconR,cy},iconR,hov?C_TEXT:C_TEXT_MUTED);
         Txt(wdl,{x+padLR+iconR*2.f+6.f,cy-ls.y*.5f},hov?C_TEXT:C_TEXT_MUTED,lbl);
         x+=pillW+gap;
     }
-    wdl->AddLine({x+2.f,by+6.f},{x+2.f,by+btnH-6.f},C_BORDER,1.f); x+=8.f;
+
+    // More (…) pill ────────────────────────────────────────────
     {
-        float pillW=34.f;
+        float pillW=btnH;
         ImGui::SetCursorScreenPos({x,by}); ImGui::InvisibleButton("##more",{pillW,btnH});
         bool hov=ImGui::IsItemHovered();
-        wdl->AddRectFilled({x,by},{x+pillW,by+btnH},hov?COL32(255,255,255,18):COL32(255,255,255,8),8.f);
+        ImU32 bg=hov?COL32(255,255,255,15):COL32(0,0,0,0);
+        wdl->AddRectFilled({x,by},{x+pillW,by+btnH},bg,8.f);
         wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
-        IconDots(wdl,{x+pillW*.5f,cy},7.f,hov?C_TEXT:C_TEXT_MUTED);
+        IconDots(wdl,{x+pillW*.5f,cy},5.f,hov?C_TEXT:C_TEXT_MUTED);
+        x+=pillW+gap;
     }
-    const char* meta="1.7B views  \xe2\x80\xa2  Jul 28, 1987";
+
+    // Views + date (right-aligned) ─────────────────────────────
+    const char* meta="1.78 views \xe2\x80\xa2 Jul 28, 1987";
     ImVec2 ms=TS(meta);
-    Txt(wdl,{pos.x+w-ms.x-12.f,cy-ms.y*.5f},C_TEXT_FAINT,meta);
+    Txt(wdl,{pos.x+w-ms.x-10.f,cy-ms.y*.5f},C_TEXT_FAINT,meta);
 }
 
-// ─── info / description zone ─────────────────────────────────
-static void DrawInfoZone(ImDrawList* dl,ImVec2 pos,float w,float& contentH)
+// ─── video area ──────────────────────────────────────────────
+static void DrawVideoArea(ImDrawList* dl,ImVec2 pos,float w,float h)
 {
-    float x=pos.x+12.f, y=pos.y+10.f, iw=w-24.f;
+    RectFill(dl,pos,{w,h},C_BLACK);
 
-    const char* title="Rick Astley \xe2\x80\x94 Never Gonna Give You Up (Official Video) 4K Remaster";
-    ImVec2 titleSz=TS16(title,iw);
-    Txt16(dl,{x,y},C_TEXT,title,iw);
-    y+=titleSz.y+8.f;
+    // Subtle gradient overlay at bottom (for controls legibility)
+    dl->AddRectFilledMultiColor(
+        {pos.x, pos.y+h*0.65f},
+        {pos.x+w, pos.y+h},
+        IM_COL32(0,0,0,0), IM_COL32(0,0,0,0),
+        IM_COL32(0,0,0,140), IM_COL32(0,0,0,140));
 
-    const char* meta2="1,782,034,159 views  \xe2\x80\xa2  Jul 28, 1987  \xe2\x80\xa2  #RickAstley #80s";
-    ImVec2 metaSz=TS(meta2);
-    Txt(dl,{x,y},C_TEXT_FAINT,meta2); y+=metaSz.y+6.f;
+    // Center play indicator (faint)
+    float cr=22.f;
+    ImVec2 cc={pos.x+w*.5f,pos.y+h*.5f};
+    dl->AddCircleFilled(cc,cr,COL32(0,0,0,80),24);
+    dl->AddCircle(cc,cr,COL32(255,255,255,40),24,1.5f);
+    IconPlay(dl,cc,9.f,COL32(255,255,255,100));
+}
 
-    dl->AddLine({pos.x,y+4.f},{pos.x+w,y+4.f},C_DIVIDER,1.f); y+=12.f;
+// ─── sidebar: related videos ─────────────────────────────────
+static void DrawSidebar(ImDrawList* dl,ImVec2 pos,float w,float h)
+{
+    RectFill(dl,pos,{w,h},C_BG);
+    dl->PushClipRect(pos,{pos.x+w,pos.y+h},true);
 
-    float tx=x;
-    if(TabBtn(dl,"Description",{tx,y},g_tab==0)){g_tab=0;} tx+=TS("Description").x+26.f;
-    if(TabBtn(dl,"Comments",{tx,y},g_tab==1)){g_tab=1;}
-    y+=32.f;
-    dl->AddLine({pos.x,y},{pos.x+w,y},C_DIVIDER,1.f); y+=10.f;
-    dl->AddLine({pos.x,y},{pos.x+w,y},C_BORDER,1.f); y+=8.f;
+    const float thumbH=80.f, thumbW=w*0.44f;
+    const float cardH=thumbH+2.f, gap=4.f;
+    float y=pos.y-g_sideScroll;
+    float totalH=(cardH+gap)*g_relatedCount+gap;
 
-    float avatarR=18.f;
-    ImVec2 avatarC={x+avatarR,y+avatarR};
-    dl->AddCircleFilled(avatarC,avatarR,COL32(0x19,0x20,0x28,255));
-    dl->AddCircle(avatarC,avatarR,C_ACCENT_LINE,0,1.5f);
-    const char* ini="R"; ImVec2 initSz=TS(ini);
-    Txt(dl,{avatarC.x-initSz.x*.5f,avatarC.y-initSz.y*.5f},C_ACCENT,ini);
+    for(int i=0;i<g_relatedCount;i++){
+        const RelItem& it=g_related[i];
+        float cardY=y;
+        if(cardY+cardH>pos.y && cardY<pos.y+h){
+            RectFill(dl,{pos.x+4.f,cardY},{w-8.f,cardH},C_SURFACE,4.f);
 
-    float cx2=x+avatarR*2.f+12.f;
-    Txt(dl,{cx2,y+3.f},C_TEXT,"Rick Astley");
-    Txt(dl,{cx2,y+19.f},C_TEXT_FAINT,"14.2M subscribers");
+            // Thumbnail gradient placeholder
+            float tx=pos.x+8.f,ty=cardY+1.f;
+            RectFill(dl,{tx,ty},{thumbW,thumbH},it.grad,3.f);
+            dl->AddRectFilledMultiColor({tx,ty+thumbH*.5f},{tx+thumbW,ty+thumbH},
+                IM_COL32(0,0,0,0),IM_COL32(0,0,0,0),
+                IM_COL32(0,0,0,120),IM_COL32(0,0,0,120));
+            // Duration badge
+            ImVec2 ds=TS(it.dur);
+            float dx=tx+thumbW-ds.x-5.f, dy=ty+thumbH-ds.y-3.f;
+            RectFill(dl,{dx-2.f,dy-1.f},{ds.x+4.f,ds.y+2.f},COL32(0,0,0,160),2.f);
+            Txt(dl,{dx,dy},C_TEXT,it.dur);
 
-    float sbx=pos.x+w-140.f;
-    ImGui::SetCursorScreenPos({sbx,y+5.f});
-    ImGui::InvisibleButton("##sub",{112.f,28.f});
-    bool subHov=ImGui::IsItemHovered();
-    if(ImGui::IsItemActivated()) g_subscribed=!g_subscribed;
-    ImDrawList* wdl=ImGui::GetWindowDrawList();
-    ImU32 subbg=g_subscribed?C_SURFACE3:(subHov?C_ACCENT_HOV:C_ACCENT);
-    wdl->AddRectFilled({sbx,y+5.f},{sbx+112.f,y+33.f},subbg,14.f);
-    const char* sublbl=g_subscribed?"Subscribed":"Subscribe";
-    ImVec2 sls=TS(sublbl);
-    Txt(wdl,{sbx+(112.f-sls.x)*.5f,y+5.f+(28.f-sls.y)*.5f},g_subscribed?C_TEXT_MUTED:C_WHITE,sublbl);
-    y+=avatarR*2.f+10.f;
-    dl->AddLine({pos.x,y},{pos.x+w,y},C_BORDER,1.f); y+=10.f;
-
-    if(g_tab==0){
-        float dbY=y, dbW=iw;
-        const char* desc=
-            "The official video for \"Never Gonna Give You Up\" by Rick Astley.\n\n"
-            "Never Gonna Give You Up was a global smash on its release in July 1987,\n"
-            "topping the charts in 25 countries including Rick's native UK and the US\n"
-            "Billboard Hot 100. It also won the Brit Award for Best single in 1988.\n\n"
-            "Stock Aitken and Waterman wrote and produced the track which was the\n"
-            "lead-off single from Rick's debut LP 'Whenever You Need Somebody'.";
-        ImVec2 dsz=TS(desc,dbW-24.f);
-        float dbH=dsz.y+24.f;
-        dl->AddRectFilled({x,dbY},{x+dbW,dbY+dbH},C_SURFACE2,8.f);
-        dl->AddRect({x,dbY},{x+dbW,dbY+dbH},C_BORDER,8.f,0,1.f);
-        Txt(dl,{x+12.f,dbY+12.f},C_TEXT_MUTED,desc,dbW-24.f);
-        y+=dbH+10.f;
-    } else {
-        Txt(dl,{x,y},C_TEXT_MUTED,"Comments are disabled for this video.");
-        y+=22.f;
+            // Text info
+            float ix=tx+thumbW+6.f, iw=w-thumbW-18.f;
+            dl->PushClipRect({ix,cardY},{ix+iw,cardY+cardH},true);
+            Txt(dl,{ix,cardY+4.f},C_TEXT,it.title);
+            Txt(dl,{ix,cardY+18.f},C_TEXT_MUTED,it.channel);
+            Txt(dl,{ix,cardY+30.f},C_TEXT_FAINT,it.views);
+            dl->PopClipRect();
+        }
+        y+=cardH+gap;
     }
-    contentH=y-pos.y;
-}
 
-// ─── sidebar ─────────────────────────────────────────────────
-static void DrawSidebar(ImDrawList* dl,ImVec2 pos,float w,float viewH)
-{
-    float y=pos.y;
-
-    RectFill(dl,{pos.x,y},{w,40.f},C_SURFACE);
-    dl->AddLine({pos.x,y+40.f},{pos.x+w,y+40.f},C_BORDER,1.f);
-    const char* upnext="UP NEXT";
-    ImVec2 unsz=TS(upnext);
-    Txt(dl,{pos.x+12.f,y+20.f-unsz.y*.5f},C_TEXT_FAINT,upnext);
-
-    // Autoplay toggle — no "ON" text inside the pill
-    const char* autoTxt="Autoplay"; ImVec2 ats=TS(autoTxt);
-    float togW=32.f,togH=16.f,togX=pos.x+w-12.f-togW,togY=y+12.f;
-    Txt(dl,{togX-ats.x-6.f,togY},C_TEXT_MUTED,autoTxt);
-    dl->AddRectFilled({togX,togY},{togX+togW,togY+togH},C_ACCENT,togH*.5f);
-    dl->AddCircleFilled({togX+togW-togH*.5f-1.f,togY+togH*.5f},togH*.5f-2.f,C_WHITE);
-    y+=40.f;
-
-    DrawNowPlayingCard(dl,{pos.x,y},w);
-    y+=68.f+2.f;
-
-    dl->PushClipRect({pos.x,y},{pos.x+w,pos.y+viewH},true);
-
-    const float itemH=72.f;
-    for(int i=1;i<g_relatedCount;i++){
-        float iy=y+(float)(i-1)*itemH-g_sideScroll;
-        if(iy+itemH < pos.y || iy > pos.y+viewH) continue;
-
-        ImGui::SetCursorScreenPos({pos.x,iy});
-        char relId[32]; snprintf(relId,sizeof(relId),"##rel%d",i);
-        ImGui::InvisibleButton(relId,{w,itemH-1.f});
-        bool hov=ImGui::IsItemHovered();
-        if(hov) RectFill(dl,{pos.x,iy},{w,itemH-1.f},COL32(255,255,255,8));
-        DrawRelatedItem(dl,{pos.x,iy},w,g_related[i],i);
+    // Scroll handle
+    if(totalH>h){
+        float trackH=h, thumbFrac=h/totalH;
+        float thumbSz=trackH*thumbFrac;
+        float scrollFrac=g_sideScroll/(totalH-h);
+        float thumbY=pos.y+scrollFrac*(trackH-thumbSz);
+        dl->AddRectFilled({pos.x+w-4.f,thumbY},{pos.x+w-1.f,thumbY+thumbSz},
+            C_BORDER_STR,2.f);
     }
 
     dl->PopClipRect();
 
+    // Scroll input (mouse wheel when hovering sidebar)
     ImVec2 mp=ImGui::GetIO().MousePos;
-    if(mp.x>=pos.x && mp.x<=pos.x+w && mp.y>=pos.y && mp.y<=pos.y+viewH){
-        float wheel=ImGui::GetIO().MouseWheel;
-        g_sideScroll-=wheel*24.f;
-        float maxS=(float)(g_relatedCount-2)*itemH;
-        if(g_sideScroll<0.f) g_sideScroll=0.f;
-        if(g_sideScroll>maxS) g_sideScroll=maxS;
+    if(mp.x>=pos.x&&mp.x<=pos.x+w&&mp.y>=pos.y&&mp.y<=pos.y+h){
+        g_sideScroll-=ImGui::GetIO().MouseWheel*30.f;
+        float maxScroll=totalH-h; if(maxScroll<0)maxScroll=0;
+        if(g_sideScroll<0)g_sideScroll=0;
+        if(g_sideScroll>maxScroll)g_sideScroll=maxScroll;
     }
 }
 
-// ─── status bar ──────────────────────────────────────────────
-static void DrawStatusBar(ImDrawList* dl,ImVec2 pos,float w)
+// ─── subscribe button ─────────────────────────────────────────
+static void DrawSubscribeBtn(ImDrawList* dl,ImVec2 pos,float w)
 {
-    float h=22.f;
-    RectFill(dl,pos,{w,h},C_SURFACE);
-    dl->AddLine(pos,{pos.x+w,pos.y},C_DIVIDER,1.f);
-    float cy=pos.y+h*.5f, ty=cy-TS("X").y*.5f;
-    ImU32 dotc=g_playing?C_SUCCESS:COL32(0xC9,0xA9,0x6B,255);
-    dl->AddCircleFilled({pos.x+10.f,cy},3.5f,dotc);
-    dl->AddCircle({pos.x+10.f,cy},6.f,g_playing?COL32(107,170,120,51):COL32(201,169,107,51),0,1.f);
-    const char* stateLabel=g_playing?"Playing":"Paused";
-    Txt(dl,{pos.x+20.f,ty},C_TEXT_MUTED,stateLabel);
-    const char* titleStatus="Rick Astley \xe2\x80\x94 Never Gonna Give You Up (Official Video) 4K Remaster";
-    ImVec2 ts2=TS(titleStatus);
-    Txt(dl,{pos.x+w*.5f-ts2.x*.5f,ty},C_TEXT_MUTED,titleStatus);
-    const char* codec="2160p  \xe2\x80\xa2  0:33 / 3:13";
-    ImVec2 cs=TS(codec);
-    Txt(dl,{pos.x+w-cs.x-10.f,ty},C_TEXT_FAINT,codec);
+    const float h=32.f;
+    ImU32 bg = g_subscribed ? C_SURFACE3 : C_ACCENT;
+    ImU32 tc = g_subscribed ? C_TEXT_MUTED : C_BG;
+    const char* lbl = g_subscribed ? "Subscribed" : "Subscribe";
+    ImVec2 ts=TS(lbl);
+    RectFill(dl,pos,{w,h},bg,5.f);
+    ImGui::SetCursorScreenPos(pos);
+    if(ImGui::InvisibleButton("##sub",{w,h})) g_subscribed=!g_subscribed;
+    Txt(dl,{pos.x+(w-ts.x)*.5f,pos.y+(h-ts.y)*.5f},tc,lbl);
 }
 
-// ─── main render frame ───────────────────────────────────────
-static void RenderFrame()
+// ─── description panel ───────────────────────────────────────
+static void DrawDescription(ImDrawList* dl,ImVec2 pos,float w)
 {
-    ImGuiIO& io=ImGui::GetIO();
-    float sw=io.DisplaySize.x, sh=io.DisplaySize.y;
+    const float h=110.f;
+    RectFill(dl,pos,{w,h},C_SURFACE,5.f);
+    Rect(dl,pos,{w,h},C_BORDER,5.f);
+    dl->PushClipRect(pos,{pos.x+w,pos.y+h},true);
+    float y=pos.y+8.f;
+    const char* title="Rick Astley \xe2\x80\x94 Never Gonna Give You Up (Official Music Video) [4K UHD]";
+    Txt(dl,{pos.x+8.f,y},C_TEXT,title); y+=16.f;
+    Txt(dl,{pos.x+8.f,y},C_TEXT_MUTED,"Rick Astley"); y+=14.f;
+    Txt(dl,{pos.x+8.f,y},C_TEXT_FAINT,"1.78 views \xe2\x80\xa2 Jul 28, 1987"); y+=18.f;
+    const char* desc="The official music video for \xe2\x80\x9cNever Gonna Give You Up\xe2\x80\x9d by Rick Astley from the debut album "
+                     "\xe2\x80\x98Whenever You Need Somebody\xe2\x80\x99 \xe2\x80\x94 deluxe 2022 remaster. \xe2\x80\xa2 Remastered in stunning 4K UHD. "
+                     "Listen on Spotify, Apple Music & more.";
+    dl->AddText(g_font13,13.f,{pos.x+8.f,y},C_TEXT_MUTED,desc,NULL);
+    dl->PopClipRect();
+}
 
+// ─── autoplay toggle ─────────────────────────────────────────
+static bool g_autoplay=true;
+static void DrawAutoplay(ImDrawList* dl,ImVec2 pos,float w)
+{
+    const float h=30.f;
+    const char* lbl="Autoplay";
+    ImVec2 ts=TS(lbl);
+    Txt(dl,{pos.x,pos.y+(h-ts.y)*.5f},C_TEXT_MUTED,lbl);
+
+    // Toggle knob (right-aligned)
+    const float kw=34.f,kh=18.f;
+    float kx=pos.x+w-kw, ky=pos.y+(h-kh)*.5f;
+    ImU32 trackC=g_autoplay?C_ACCENT:C_SURFACE3;
+    RectFill(dl,{kx,ky},{kw,kh},trackC,kh*.5f);
+    float cx=g_autoplay?(kx+kw-kh*.5f-2.f):(kx+kh*.5f+2.f);
+    dl->AddCircleFilled({cx,ky+kh*.5f},kh*.5f-2.f,C_TEXT,12);
+    // "ON" indicator: small white circle centred in the left half of the track
+    if(g_autoplay){
+        float dotX=kx+kh*.5f+2.f, dotY=ky+kh*.5f;
+        dl->AddCircleFilled({dotX,dotY},2.5f,COL32(255,255,255,200),8);
+    }
+    ImGui::SetCursorScreenPos({kx,ky});
+    if(ImGui::InvisibleButton("##ap",{kw,kh})) g_autoplay=!g_autoplay;
+}
+
+// ─── render frame ────────────────────────────────────────────
+static const float TITLEBAR_H   = 38.f;
+static const float VIDEO_H      = 300.f;
+static const float CTRL_H       = 72.f;   // FIX: was 62 (matches DrawControls)
+static const float ACTION_H     = 46.f;
+static const float DESC_H       = 110.f;
+static const float SIDEBAR_W    = 220.f;
+static const float AUTOPLAY_H   = 30.f;
+
+static void RenderFrame(ImDrawList* dl,float W,float H)
+{
+    float mainW = W - SIDEBAR_W;
+    float y     = 0.f;
+
+    DrawTitlebar (dl,{0,y},W);           y+=TITLEBAR_H;
+    DrawVideoArea(dl,{0,y},mainW,VIDEO_H);
+    DrawSidebar  (dl,{mainW,y},SIDEBAR_W,H-TITLEBAR_H);
+    y+=VIDEO_H;
+    DrawControls (dl,{0,y},mainW);       y+=CTRL_H;
+    DrawActionBar(dl,{0,y},mainW);       y+=ACTION_H;
+
+    float descY=y, descW=mainW-120.f;
+    DrawDescription(dl,{0,descY},descW); 
+    DrawSubscribeBtn(dl,{descW+8.f,descY+8.f},104.f);
+    y+=DESC_H+8.f;
+
+    DrawAutoplay(dl,{8.f,y},mainW-16.f);
+}
+
+// ─── ImGui window wrapper ─────────────────────────────────────
+static void DrawUI(float W,float H)
+{
     ImGui::SetNextWindowPos({0,0});
-    ImGui::SetNextWindowSize({sw,sh});
-    ImGui::PushStyleColor(ImGuiCol_WindowBg,U32toV4(C_BG));
+    ImGui::SetNextWindowSize({W,H});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{0,0});
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,0.f);
-    ImGui::Begin("##root",NULL,
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,0);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg,U32toV4(C_BG));
+
+    ImGui::Begin("##main",NULL,
         ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|
-        ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoScrollbar|
-        ImGuiWindowFlags_NoScrollWithMouse|ImGuiWindowFlags_NoBringToFrontOnFocus);
+        ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse|
+        ImGuiWindowFlags_NoBringToFrontOnFocus);
 
     ImDrawList* dl=ImGui::GetWindowDrawList();
-
-    // FIX: CTRL_H updated from 62 to 72 to match DrawControls h.
-    const float TB_H  =38.f, SB_H=22.f, CTRL_H=72.f, ACT_H=46.f;
-    const float SIDE_W=300.f, MAIN_W=sw-SIDE_W;
-
-    float contentH=sh-TB_H-SB_H;
-    float vidH=MAIN_W*9.f/16.f;
-    float maxVidH=contentH-CTRL_H-ACT_H-260.f;
-    if(vidH>maxVidH) vidH=maxVidH;
-    if(vidH<120.f)   vidH=120.f;
-
-    DrawTitlebar(dl,{0.f,0.f},sw);
-
-    float mainY=TB_H;
-    DrawVideoArea(dl,{0.f,mainY},MAIN_W,vidH);
-    float sy=mainY+vidH;
-    DrawControls(dl,{0.f,sy},MAIN_W);
-    DrawActionBar(dl,{0.f,sy+CTRL_H},MAIN_W);
-
-    float infoY=sy+CTRL_H+ACT_H;
-    float infoHOut=0.f;
-    DrawInfoZone(dl,{0.f,infoY},MAIN_W,infoHOut);
-
-    float sideX=MAIN_W;
-    RectFill(dl,{sideX,TB_H},{SIDE_W,sh-TB_H-SB_H},C_SURFACE);
-    dl->AddLine({sideX,TB_H},{sideX,sh-SB_H},C_BORDER,1.f);
-    DrawSidebar(dl,{sideX,TB_H},SIDE_W,sh-TB_H-SB_H);
-
-    DrawStatusBar(dl,{0.f,sh-SB_H},sw);
+    float W2=(float)ImGui::GetWindowWidth();
+    float H2=(float)ImGui::GetWindowHeight();
+    RenderFrame(dl,W2,H2);
 
     ImGui::End();
+    ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(1);
 }
 
 // ─── WinMain ─────────────────────────────────────────────────
-int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int nCmdShow)
+int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int)
 {
-    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    CoInitialize(NULL);
 
-    WNDCLASSEXA wc={sizeof(wc)};
-    wc.style=CS_CLASSDC;
-    wc.lpfnWndProc=WndProc;
-    wc.hInstance=hInst;
-    wc.lpszClassName="SightlinePlayer";
+    WNDCLASSEXA wc={sizeof(wc),CS_CLASSDC,WndProc,0,0,hInst,
+        LoadIconA(hInst,MAKEINTRESOURCEA(IDI_APP_ICON)),
+        NULL,NULL,NULL,"SightlineWnd",NULL};
     RegisterClassExA(&wc);
+    g_hwnd=CreateWindowExA(0,"SightlineWnd","Sightline",
+        WS_OVERLAPPEDWINDOW,100,100,960,640,NULL,NULL,hInst,NULL);
 
-    g_hwnd=CreateWindowExA(0,"SightlinePlayer","Sightline Player",
-        WS_OVERLAPPEDWINDOW,100,100,1280,800,NULL,NULL,hInst,NULL);
-
-    if(!CreateDeviceD3D(g_hwnd)){
-        CleanupDevice();
-        UnregisterClassA(wc.lpszClassName,hInst);
-        CoUninitialize();
-        return 1;
-    }
-
-    ShowWindow(g_hwnd,nCmdShow);
+    if(!CreateDeviceD3D(g_hwnd)){ DestroyWindow(g_hwnd); return 1; }
+    ShowWindow(g_hwnd,SW_SHOWDEFAULT);
     UpdateWindow(g_hwnd);
 
     IMGUI_CHECKVERSION();
@@ -1093,74 +981,82 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int nCmdShow)
     ImGuiIO& io=ImGui::GetIO();
     io.IniFilename=NULL;
 
-    // ── Font loading (runtime check — no #if) ────────────────
-    if(HasElectrolize()){
-        ImFontConfig c13; c13.FontDataOwnedByAtlas=false;
-        g_font13=io.Fonts->AddFontFromMemoryTTF(
-            (void*)electrolize_regular_ttf,(int)electrolize_regular_ttf_len,
-            13.f,&c13,g_glyph_ranges);
-        ImFontConfig c16; c16.FontDataOwnedByAtlas=false;
-        g_font16=io.Fonts->AddFontFromMemoryTTF(
-            (void*)electrolize_regular_ttf,(int)electrolize_regular_ttf_len,
-            16.f,&c16,g_glyph_ranges);
-    }
-    if(!g_font13){ g_font13=io.Fonts->AddFontDefault(); g_font16=g_font13; }
-    io.FontDefault=g_font13;
-
     ImGui::StyleColorsDark();
-    ImGuiStyle& st=ImGui::GetStyle();
-    st.WindowBorderSize=0.f; st.WindowRounding=0.f;
-    st.ScrollbarRounding=3.f; st.ScrollbarSize=6.f; st.FrameRounding=4.f;
-    st.Colors[ImGuiCol_PopupBg]    =U32toV4(C_SURFACE2);
-    st.Colors[ImGuiCol_Border]     =U32toV4(C_BORDER);
-    st.Colors[ImGuiCol_FrameBg]    =U32toV4(C_SURFACE3);
-    st.Colors[ImGuiCol_ScrollbarBg]=U32toV4(C_SURFACE);
+    ImGuiStyle& style=ImGui::GetStyle();
+    style.WindowRounding=0; style.FrameRounding=4; style.ScrollbarRounding=4;
+    style.FramePadding={4,4}; style.ItemSpacing={6,4};
 
     ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplDX9_Init(g_pd3dDev);
 
-    // ── Load logo texture via WIC (runtime check) ─────────────
+    // ── Font loading ──────────────────────────────────────────
+    // Build atlas once. Load Electrolize if available; fall back to ProggyClean.
+    ImFontConfig cfg;
+    cfg.OversampleH=2; cfg.OversampleV=2;
+    if(HasElectrolize()){
+        // Two sizes: 13 (labels/metadata) and 16 (body/nav)
+        cfg.FontDataOwnedByAtlas=false;
+        memcpy(cfg.Name,"Electrolize13",sizeof(cfg.Name));
+        g_font13=io.Fonts->AddFontFromMemoryTTF(
+            const_cast<unsigned char*>(electrolize_regular_ttf),
+            (int)electrolize_regular_ttf_len,
+            13.f,&cfg,g_glyph_ranges);
+        memcpy(cfg.Name,"Electrolize16",sizeof(cfg.Name));
+        g_font16=io.Fonts->AddFontFromMemoryTTF(
+            const_cast<unsigned char*>(electrolize_regular_ttf),
+            (int)electrolize_regular_ttf_len,
+            16.f,&cfg,g_glyph_ranges);
+    }
+    if(!g_font13){
+        // ProggyClean embedded in ImGui — always available.
+        // It's a bitmap font (13px), pixel-perfect at 1:1 scale.
+        g_font13=io.Fonts->AddFontDefault();
+    }
+    if(!g_font16) g_font16=g_font13;
+    io.Fonts->Build();
+    io.FontDefault=g_font16;
+
+    // ── Logo texture ──────────────────────────────────────────
     if(HasLogo()){
         LoadPNGFromMemory(sightline_logo_png, sightline_logo_png_len,
                           g_pd3dDev, &g_logoTex, &g_logoTexW, &g_logoTexH);
     }
 
-    ImVec4 clearCol=U32toV4(C_BG);
     MSG msg; ZeroMemory(&msg,sizeof(msg));
     while(msg.message!=WM_QUIT){
-        if(PeekMessageA(&msg,NULL,0U,0U,PM_REMOVE)){
-            TranslateMessage(&msg);
-            DispatchMessageA(&msg);
-            continue;
+        if(PeekMessageA(&msg,NULL,0,0,PM_REMOVE)){
+            TranslateMessage(&msg); DispatchMessageA(&msg); continue;
         }
+
+        HRESULT hr=g_pd3dDev->TestCooperativeLevel();
+        if(hr==D3DERR_DEVICELOST){ Sleep(10); continue; }
+        if(hr==D3DERR_DEVICENOTRESET){ ResetDevice(); continue; }
+
         ImGui_ImplDX9_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
-        RenderFrame();
+
+        float W=(float)ImGui::GetIO().DisplaySize.x;
+        float H=(float)ImGui::GetIO().DisplaySize.y;
+        DrawUI(W,H);
+
         ImGui::EndFrame();
-        g_pd3dDev->SetRenderState(D3DRS_ZENABLE,FALSE);
-        g_pd3dDev->SetRenderState(D3DRS_ALPHABLENDENABLE,FALSE);
-        g_pd3dDev->SetRenderState(D3DRS_SCISSORTESTENABLE,FALSE);
-        D3DCOLOR cc=D3DCOLOR_RGBA(
-            (int)(clearCol.x*255),(int)(clearCol.y*255),
-            (int)(clearCol.z*255),(int)(clearCol.w*255));
-        g_pd3dDev->Clear(0,NULL,D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER,cc,1.f,0);
+        g_pd3dDev->Clear(0,NULL,D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER,
+            D3DCOLOR_RGBA(12,16,20,255),1.f,0);
         if(g_pd3dDev->BeginScene()==D3D_OK){
             ImGui::Render();
             ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
             g_pd3dDev->EndScene();
         }
-        HRESULT hr=g_pd3dDev->Present(NULL,NULL,NULL,NULL);
-        if(hr==D3DERR_DEVICELOST &&
-           g_pd3dDev->TestCooperativeLevel()==D3DERR_DEVICENOTRESET)
-            ResetDevice();
+        g_pd3dDev->Present(NULL,NULL,NULL,NULL);
     }
 
     ImGui_ImplDX9_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
     CleanupDevice();
-    UnregisterClassA(wc.lpszClassName,hInst);
+    DestroyWindow(g_hwnd);
+    UnregisterClassA("SightlineWnd",hInst);
     CoUninitialize();
     return 0;
 }
