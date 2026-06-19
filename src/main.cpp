@@ -375,8 +375,11 @@ static bool SeekBar(ImDrawList* dl,ImVec2 pos,float width,float height,
     bool act=ImGui::IsItemActive();
     bool changed=false;
 
-    // 6px inset on each side keeps the thumb circle inside the bar
-    const float padX  = 6.f;
+    // FIX: padX increased to 8 so the thumb circle (r=5.5) is fully
+    // contained within the widget at val=0 and val=1.
+    // Previously 6px was exactly the circle radius, causing the left/right
+    // edges of the thumb to paint 0.5px outside the widget bounds.
+    const float padX   = 8.f;
     const float railX0 = pos.x + padX;
     const float railW  = width - padX * 2.f;
 
@@ -406,18 +409,25 @@ static bool VolBar(ImDrawList* dl,ImVec2 pos,float width,float height,float* val
     bool act=ImGui::IsItemActive();
     bool hov=ImGui::IsItemHovered();
     bool changed=false;
+
+    // FIX: add matching padX so the thumb circle at val=0 does not
+    // paint at the raw left edge of the widget (was missing entirely).
+    const float padX   = 5.f;
+    const float railX0 = pos.x + padX;
+    const float railW  = width - padX * 2.f;
+
     if(act){
         float mx=ImGui::GetIO().MousePos.x;
-        *val=(mx-pos.x)/width;
+        *val=(mx - railX0) / railW;
         if(*val<0.f)*val=0.f; if(*val>1.f)*val=1.f;
         changed=true;
     }
     float cy=pos.y+height*.5f;
     float rh=3.f,ry=cy-rh*.5f;
-    dl->AddRectFilled({pos.x,ry},{pos.x+width,ry+rh},C_SURFACE3,rh*.5f);
-    dl->AddRectFilled({pos.x,ry},{pos.x+width*(*val),ry+rh},C_ACCENT,rh*.5f);
+    dl->AddRectFilled({railX0,ry},{railX0+railW,         ry+rh},C_SURFACE3,rh*.5f);
+    dl->AddRectFilled({railX0,ry},{railX0+railW*(*val),  ry+rh},C_ACCENT,  rh*.5f);
     if(hov||act){
-        float tx=pos.x+width*(*val);
+        float tx=railX0+railW*(*val);
         dl->AddCircleFilled({tx,cy},5.f,C_TEXT);
     }
     return changed;
@@ -573,8 +583,14 @@ static void DrawTitlebar(ImDrawList* dl,ImVec2 pos,float w)
     float x =pos.x+8.f;
 
     // ── Logo ────────────────────────────────────────────────
-    float logoAreaH = h - 2.f;
-    float logoAreaY = pos.y + 1.f;
+    // FIX: logoAreaH was (h - 2) = 36px which, combined with the
+    // 140px max-width cap in DrawLogoArea, produced a tiny logo
+    // because scale was driven by height alone.  By giving the logo
+    // area the full titlebar height (h) the width cap is reached
+    // first for typical wide logos, yielding a properly-sized image.
+    // A 1px vertical margin is kept via logoAreaY = pos.y + 1.
+    const float logoAreaH = h;          // was: h - 2.f
+    const float logoAreaY = pos.y + 1.f;
     DrawLogoArea(dl, {x, logoAreaY}, logoAreaH);
     if(g_logoTex && g_logoTexH > 0){
         float scale = logoAreaH / (float)g_logoTexH;
