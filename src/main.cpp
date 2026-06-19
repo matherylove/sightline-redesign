@@ -341,9 +341,8 @@ static void IconThumbDown(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
     dl->AddRectFilled({c.x-hw,c.y-hh},{c.x-hw+r*.22f,c.y-hh*.1f},col,1.f);
 }
 
-// FIX: IconSkip — draw number at true centre of the arc circle,
-//      not offset by the arc radius. The "10" label belongs inside
-//      the circular arc, so use the button centre (c) directly.
+// FIX: IconSkip — arc radius r*.65f fills the button well at any r.
+//      "10" label centred inside the arc circle at (c), not at arc tip.
 static void IconSkip(ImDrawList* dl,ImVec2 c,float r,ImU32 col,bool forward)
 {
     if(forward){
@@ -360,20 +359,12 @@ static void IconSkip(ImDrawList* dl,ImVec2 c,float r,ImU32 col,bool forward)
     ImVec2 p1={ax+as2*cosf(ang+3.14f*0.7f),ay+as2*sinf(ang+3.14f*0.7f)};
     ImVec2 p2={ax+as2*cosf(ang-3.14f*0.7f),ay+as2*sinf(ang-3.14f*0.7f)};
     dl->AddTriangleFilled(tip,p1,p2,col);
-    // Centre "10" label inside the arc circle (at c, not at arc tip)
     const char* num="10";
     ImVec2 ns=TS(num);
     dl->AddText(g_font13,13.f,{c.x-ns.x*.5f,c.y-ns.y*.5f+r*.05f},col,num);
 }
 
 // ─── seekbar / volbar ─────────────────────────────────────────
-// FIX: SeekBar now adds 6px horizontal padding on each side so the
-//      thumb circle at the extreme left/right is never clipped.
-//      The InvisibleButton still covers the full width (no change
-//      to hit-area). Value clamping uses the padded rail extents.
-//      Both SeekBar and VolBar receive the caller's draw list (dl)
-//      instead of calling GetWindowDrawList() internally, which
-//      avoids draw-order bugs when called from a custom dl context.
 static bool SeekBar(ImDrawList* dl,ImVec2 pos,float width,float height,
                     float* val,float buf,ImU32 cRail,ImU32 cBuf,ImU32 cFill,ImU32 cThumb)
 {
@@ -465,19 +456,13 @@ static bool TabBtn(ImDrawList* dl,const char* label,ImVec2 pos,bool active)
 }
 
 // ─── logo drawing ────────────────────────────────────────────
-// FIX (logo size): DrawLogoArea uses the full availH as the render
-//      height.  Scale is computed against the texture's own height
-//      so we always fill the bar vertically.  dstW is capped at
-//      140px so a very wide PNG can't overflow into nav buttons.
 static void DrawLogoArea(ImDrawList* dl, ImVec2 pos, float availH)
 {
     if(g_logoTex && g_logoTexW > 0 && g_logoTexH > 0){
         float scale = availH / (float)g_logoTexH;
         float dstW  = (float)g_logoTexW * scale;
-        // Cap width so a wide PNG doesn't overflow into the nav area
         if(dstW > 140.f){ scale = 140.f / (float)g_logoTexW; dstW = 140.f; }
         float dstH  = (float)g_logoTexH * scale;
-        // Vertically centre within availH (handles non-square PNGs cleanly)
         float yOff  = (availH - dstH) * 0.5f;
         dl->AddImage((ImTextureID)(intptr_t)g_logoTex,
             {pos.x, pos.y + yOff}, {pos.x+dstW, pos.y+yOff+dstH},
@@ -578,9 +563,6 @@ static void DrawRelatedItem(ImDrawList* dl,ImVec2 pos,float w,const RelItem& ite
 }
 
 // ─── titlebar ────────────────────────────────────────────────
-// FIX (logo): logoAreaH = h - 2 (was h - 8) so the PNG fills
-//      almost the full titlebar height.  logoAreaY = pos.y + 1
-//      to centre it within the extra space.
 static void DrawTitlebar(ImDrawList* dl,ImVec2 pos,float w)
 {
     float h=38.f;
@@ -590,9 +572,8 @@ static void DrawTitlebar(ImDrawList* dl,ImVec2 pos,float w)
     float cy=pos.y+h*.5f;
     float x =pos.x+8.f;
 
-    // ── Logo only (no text label) ────────────────────────────
-    // FIX: use h-2 so the logo occupies 36px of the 38px bar height
-    float logoAreaH = h - 2.f;   // was h - 8.f
+    // ── Logo ────────────────────────────────────────────────
+    float logoAreaH = h - 2.f;
     float logoAreaY = pos.y + 1.f;
     DrawLogoArea(dl, {x, logoAreaY}, logoAreaH);
     if(g_logoTex && g_logoTexH > 0){
@@ -601,11 +582,8 @@ static void DrawTitlebar(ImDrawList* dl,ImVec2 pos,float w)
         if(dstW > 140.f) dstW = 140.f;
         x += dstW + 12.f;
     } else {
-        // vector fallback circle width
         x += logoAreaH + 12.f;
     }
-    // NOTE: 'SIGHTLINE' text has been intentionally removed.
-    // Only the texture logo (or its vector fallback) is shown.
 
     {
         float btnSz=28.f, by=cy-btnSz*.5f;
@@ -694,15 +672,12 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
     SeekBar(dl,{pos.x,seekY},w,seekH,&g_seek,0.42f,
         COL32(255,255,255,25),COL32(78,168,168,60),C_ACCENT,C_TEXT);
 
-    // ── Time labels (drawn AFTER seek so they're on top) ──────
+    // ── Time labels ───────────────────────────────────────────
     {
-        // FIX: use a clip rect that spans the full bar width so
-        //      the left-side timestamp is never clipped off.
         const float timeY = seekY + seekH + 2.f;
         int totalSec=600, curSec=(int)(g_seek*totalSec);
         char cur[16]; snprintf(cur,sizeof(cur),"%d:%02d",curSec/60,curSec%60);
         const char* tot="10:00";
-        // Push a wide clip so neither label is trimmed
         dl->PushClipRect({pos.x,pos.y},{pos.x+w,pos.y+h},true);
         Txt(dl,{pos.x+6.f, timeY},C_TEXT_FAINT,cur);
         ImVec2 ts2=TS(tot);
@@ -711,8 +686,6 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
     }
 
     // ── Button / control row ──────────────────────────────────
-    // cy sits in the lower half of the bar, centred between the
-    // time-label row (~y+36) and the bar bottom (y+62) → y+47.
     const float cy = pos.y + 47.f;
     float x = pos.x + 12.f;
 
@@ -720,7 +693,7 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
 
     // Play/Pause
     {
-        const float btnSz = 28.f;   // FIX: reduced from 34 to match HTML reference
+        const float btnSz = 28.f;
         const float bhalf = btnSz * 0.5f;
         ImVec2 bpos = {x, cy - bhalf};
         ImGui::SetCursorScreenPos(bpos);
@@ -736,28 +709,41 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
         x += btnSz + 4.f;
     }
 
+    // FIX: -10s / +10s — inline InvisibleButton so IconSkip always
+    //      paints on top of the hover rect with the same draw list.
+    //      Icon radius raised to 11.f so the arc + "10" label fit
+    //      comfortably inside the 28px button.
     // Rewind -10s
     {
-        const float bsz=26.f;
-        bool clicked = IconBtn("##m10",{x,cy-bsz*.5f},bsz);
-        IconSkip(wdl,{x+bsz*.5f,cy},9.f,C_TEXT_MUTED,false);
-        if(clicked){ g_seek-=10.f/600.f; if(g_seek<0.f)g_seek=0.f; }
-        x+=bsz+4.f;
+        const float bsz = 28.f;
+        ImVec2 bpos = {x, cy - bsz * 0.5f};
+        ImGui::SetCursorScreenPos(bpos);
+        ImGui::InvisibleButton("##m10",{bsz,bsz});
+        bool hov     = ImGui::IsItemHovered();
+        bool clicked = ImGui::IsItemActivated();
+        if(hov) wdl->AddRectFilled(bpos,{bpos.x+bsz,bpos.y+bsz},COL32(255,255,255,20),4.f);
+        IconSkip(wdl,{x + bsz * 0.5f, cy},11.f,C_TEXT_MUTED,false);
+        if(clicked){ g_seek -= 10.f/600.f; if(g_seek<0.f) g_seek=0.f; }
+        x += bsz + 4.f;
     }
 
     // Forward +10s
     {
-        const float bsz=26.f;
-        bool clicked = IconBtn("##p10",{x,cy-bsz*.5f},bsz);
-        IconSkip(wdl,{x+bsz*.5f,cy},9.f,C_TEXT_MUTED,true);
-        if(clicked){ g_seek+=10.f/600.f; if(g_seek>1.f)g_seek=1.f; }
-        x+=bsz+4.f;
+        const float bsz = 28.f;
+        ImVec2 bpos = {x, cy - bsz * 0.5f};
+        ImGui::SetCursorScreenPos(bpos);
+        ImGui::InvisibleButton("##p10",{bsz,bsz});
+        bool hov     = ImGui::IsItemHovered();
+        bool clicked = ImGui::IsItemActivated();
+        if(hov) wdl->AddRectFilled(bpos,{bpos.x+bsz,bpos.y+bsz},COL32(255,255,255,20),4.f);
+        IconSkip(wdl,{x + bsz * 0.5f, cy},11.f,C_TEXT_MUTED,true);
+        if(clicked){ g_seek += 10.f/600.f; if(g_seek>1.f) g_seek=1.f; }
+        x += bsz + 4.f;
     }
 
-    // FIX: volume icon — use a fixed icon width so the vol slider
-    //      starts at a predictable offset and doesn't overlap or gap.
+    // Volume icon + slider
     {
-        const float iconW = 22.f;  // bounding width of the volume icon
+        const float iconW = 22.f;
         IconVolume(wdl,{x+iconW*.5f,cy},9.f,C_TEXT_MUTED);
         x += iconW + 4.f;
     }
@@ -771,8 +757,7 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
     if(IconBtn("##fs",{rx,cy-13.f},26.f)){}
     IconFullscreen(wdl,{rx+13.f,cy},9.f,C_TEXT_MUTED);
 
-    // FIX: quality badge — wider pill (60px) so "2160p" fits without
-    //      clipping, text properly centred vertically.
+    // Quality badge
     rx-=66.f;
     {
         const float qW=60.f, qH=22.f;
@@ -784,7 +769,6 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
         if(ImGui::IsItemActivated()) g_quality=(g_quality+1)%g_qualityCount;
         const char* qlbl=g_qualityOpts[g_quality];
         ImVec2 qts=TS(qlbl);
-        // FIX: centre text both horizontally and vertically in the pill
         Txt(wdl,{qX+(qW-qts.x)*.5f, qY+(qH-qts.y)*.5f},C_ACCENT,qlbl);
     }
 }
@@ -800,7 +784,6 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
     float x=pos.x+12.f;
     ImDrawList* wdl=ImGui::GetWindowDrawList();
 
-    // FIX: like count corrected to "248K" (was "24BK" due to stray B)
     {
         const char* cnt="248K";
         ImVec2 cs=TS(cnt);
@@ -864,7 +847,6 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         wdl->AddRect({x,by},{x+pillW,by+btnH},C_BORDER,8.f,0,1.f);
         IconDots(wdl,{x+pillW*.5f,cy},7.f,hov?C_TEXT:C_TEXT_MUTED);
     }
-    // FIX: meta string — "1.7B views" (not "1.78 views"); bullet is U+2022 via \xe2\x80\xa2
     const char* meta="1.7B views  \xe2\x80\xa2  Jul 28, 1987";
     ImVec2 ms=TS(meta);
     Txt(wdl,{pos.x+w-ms.x-12.f,cy-ms.y*.5f},C_TEXT_FAINT,meta);
@@ -951,13 +933,12 @@ static void DrawSidebar(ImDrawList* dl,ImVec2 pos,float w,float viewH)
     ImVec2 unsz=TS(upnext);
     Txt(dl,{pos.x+12.f,y+20.f-unsz.y*.5f},C_TEXT_FAINT,upnext);
 
+    // Autoplay toggle — no "ON" text inside the pill
     const char* autoTxt="Autoplay"; ImVec2 ats=TS(autoTxt);
     float togW=32.f,togH=16.f,togX=pos.x+w-12.f-togW,togY=y+12.f;
     Txt(dl,{togX-ats.x-6.f,togY},C_TEXT_MUTED,autoTxt);
     dl->AddRectFilled({togX,togY},{togX+togW,togY+togH},C_ACCENT,togH*.5f);
     dl->AddCircleFilled({togX+togW-togH*.5f-1.f,togY+togH*.5f},togH*.5f-2.f,C_WHITE);
-    ImVec2 onSz=TS("ON");
-    Txt(dl,{togX+4.f,togY+(togH-onSz.y)*.5f},C_BLACK,"ON");
     y+=40.f;
 
     DrawNowPlayingCard(dl,{pos.x,y},w);
