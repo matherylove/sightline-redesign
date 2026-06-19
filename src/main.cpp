@@ -79,30 +79,32 @@ static const ImWchar g_glyph_ranges[] = {
     0x0020,0x00FF, 0x0100,0x024F, 0x2000,0x206F, 0x20AC,0x20AC, 0,
 };
 
-// ─── glyph ranges (icon font — FA6 Solid private-use block) ──
-// Font Awesome 6 Solid maps its glyphs into the Unicode PUA
-// range starting at U+E000. We load only the icons we actually
-// use so the atlas stays small. Each pair is [first, last].
+// ─── glyph ranges (icon font — FA6 Solid) ────────────────────
+// Font Awesome 6 Solid maps its glyphs into U+F000..U+F8FF.
+// The E000 PUA block contains NO FA6 glyphs — using it caused
+// every icon to render the same fallback/first glyph.
 static const ImWchar g_icon_ranges[] = {
-    0xE000, 0xF8FF,  // Private Use Area — covers all FA6 glyphs
+    0xF000, 0xF8FF,
     0,
 };
 
-// ─── Font Awesome 6 Solid codepoints used in this file ───────
-// Names match https://fontawesome.com/icons?s=solid
-#define ICO_PLAY           "\xEE\x84\x8B"   // U+F04B  fa-play
-#define ICO_PAUSE          "\xEE\x84\x8C"   // U+F04C  fa-pause
-#define ICO_BACKWARD       "\xEE\xA0\x88"   // U+F808  fa-backward-step  (rewind 10s)
-#define ICO_FORWARD        "\xEE\xA0\x81"   // U+F801  fa-forward-step   (skip 10s)
-#define ICO_VOLUME_HIGH    "\xEE\x84\xA8"   // U+F028  fa-volume-high  (was fa-volume-up)
-#define ICO_EXPAND         "\xEE\x84\xA7"   // U+F065  fa-expand         (fullscreen)
-#define ICO_THUMB_UP       "\xEE\x84\xA4"   // U+F164  fa-thumbs-up
-#define ICO_THUMB_DOWN     "\xEE\x84\xA5"   // U+F165  fa-thumbs-down
-#define ICO_SHARE          "\xEE\x86\xA7"   // U+F1E0  fa-share-nodes
-#define ICO_DOWNLOAD       "\xEE\x84\x99"   // U+F019  fa-download
-#define ICO_ELLIPSIS_H     "\xEE\x85\xBB"   // U+F141  fa-ellipsis        (three dots)
-#define ICO_PLAY_CIRCLE    "\xEE\x84\xB6"   // U+F144  fa-circle-play     (video area)
-#define ICO_GEAR           "\xEE\x80\x93"   // U+F013  fa-gear            (settings)
+// ─── Font Awesome 6 Solid codepoints ─────────────────────────
+// UTF-8 encoding for U+F000-range: first byte is always 0xEF.
+// Previous code used 0xEE (wrong block). All corrected below.
+// Reference: https://fontawesome.com/icons?s=solid
+#define ICO_PLAY           "\xEF\x81\x8B"   // U+F04B  fa-play
+#define ICO_PAUSE          "\xEF\x81\x8C"   // U+F04C  fa-pause
+#define ICO_BACKWARD       "\xEF\x81\x88"   // U+F048  fa-backward-step
+#define ICO_FORWARD        "\xEF\x81\x91"   // U+F051  fa-forward-step
+#define ICO_VOLUME_HIGH    "\xEF\x80\xA8"   // U+F028  fa-volume-high
+#define ICO_EXPAND         "\xEF\x81\xA5"   // U+F065  fa-expand
+#define ICO_THUMB_UP       "\xEF\x85\xA4"   // U+F164  fa-thumbs-up
+#define ICO_THUMB_DOWN     "\xEF\x85\xA5"   // U+F165  fa-thumbs-down
+#define ICO_SHARE          "\xEF\x81\xA4"   // U+F064  fa-share
+#define ICO_DOWNLOAD       "\xEF\x80\x99"   // U+F019  fa-download
+#define ICO_ELLIPSIS_H     "\xEF\x85\x81"   // U+F141  fa-ellipsis
+#define ICO_PLAY_CIRCLE    "\xEF\x85\x84"   // U+F144  fa-circle-play
+#define ICO_GEAR           "\xEF\x80\x93"   // U+F013  fa-gear
 
 // ─── font handles ────────────────────────────────────────────
 static ImFont* g_font13   = nullptr;  // Electrolize 13 — body text
@@ -292,23 +294,17 @@ static ImVec2 TS16(const char* s,float wrap=0.f)
 }
 
 // ── Icon font helpers (FA6 Solid — icons only) ───────────────
-// IcoTxt: render one icon glyph centred at pixel position (cx, cy).
-// sz: render size in pixels. Falls back to a small filled circle
-// if the icon font was not loaded (stub build).
 static void IcoTxt(ImDrawList* dl, ImVec2 centre, float sz, ImU32 col,
                    const char* glyph)
 {
     if(g_fontIco && fa6_solid_ttf_len > 4) {
-        // CalcTextSizeA gives us the advance width; height ~ sz.
         ImVec2 gsz = g_fontIco->CalcTextSizeA(sz, FLT_MAX, 0.f, glyph);
         ImVec2 pos = { centre.x - gsz.x * 0.5f, centre.y - gsz.y * 0.5f };
         dl->AddText(g_fontIco, sz, pos, col, glyph);
     } else {
-        // Fallback: tiny filled circle so the layout is not broken
         dl->AddCircleFilled(centre, sz * 0.35f, col);
     }
 }
-// IcoSz: measure a glyph's rendered size (used for pill-width calc).
 static ImVec2 IcoSz(float sz, const char* glyph)
 {
     if(g_fontIco && fa6_solid_ttf_len > 4)
@@ -379,8 +375,6 @@ static bool VolBar(ImDrawList* dl,ImVec2 pos,float width,float height,float* val
 }
 
 // ─── IconBtn ─────────────────────────────────────────────────
-// Uses the draw list passed in (dl) instead of GetWindowDrawList()
-// to keep all draw calls in the same list and avoid ordering bugs.
 static bool IconBtn(ImDrawList* dl,const char* id,ImVec2 pos,float size)
 {
     ImGui::SetCursorScreenPos(pos);
@@ -467,7 +461,6 @@ static void DrawNowPlayingCard(ImDrawList* dl, ImVec2 pos, float w)
     dl->AddRectFilled({tx,ty},{tx+thumbW,ty+thumbH},COL32(78,168,168,25),3.f);
     ImVec2 cc={tx+thumbW*.5f,ty+thumbH*.5f};
     dl->AddCircleFilled(cc,11.f,COL32(0,0,0,120));
-    // Icon font: play button inside thumbnail
     IcoTxt(dl, cc, 10.f, C_ACCENT, ICO_PLAY);
 
     float ix=tx+thumbW+8.f;
@@ -608,15 +601,12 @@ static void DrawVideoArea(ImDrawList* dl,ImVec2 pos,float w,float h)
         COL32(0,0,0,0),COL32(0,0,0,0),COL32(0,0,0,160),COL32(0,0,0,160));
     ImVec2 cc={pos.x+w*.5f,pos.y+h*.5f};
     dl->AddCircle(cc,28.f,COL32(78,168,168,38),0,1.f);
-    // Icon font: circle-play in the video centre
     IcoTxt(dl, cc, 24.f, COL32(78,168,168,38), ICO_PLAY_CIRCLE);
 }
 
 // ─── controls bar ────────────────────────────────────────────
 static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
 {
-    // h=76 gives enough vertical room so the time labels (at seekY+seekH+2)
-    // never overlap the button row below them.
     const float h      = 76.f;
     const float seekH  = 14.f;
     const float seekY  = pos.y + 8.f;
@@ -629,8 +619,6 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
         COL32(255,255,255,25),COL32(78,168,168,60),C_ACCENT,C_TEXT);
 
     // ── Time labels ───────────────────────────────────────────
-    // timeY = seekY + seekH + 2 = 8 + 14 + 2 = 24  (relative to pos.y)
-    // Button row cy = pos.y + 58, buttons span [44 .. 72] — no overlap.
     {
         const float timeY = seekY + seekH + 2.f;
         int totalSec=600, curSec=(int)(g_seek*totalSec);
@@ -644,12 +632,10 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
     }
 
     // ── Button row ───────────────────────────────────────────
-    // cy raised to pos.y+58 so buttons sit in the lower portion
-    // of the taller bar, well clear of the time labels above.
     const float cy = pos.y + 58.f;
     float x = pos.x + 12.f;
 
-    // Play / Pause  (icon font)
+    // Play / Pause
     {
         const float btnSz = 28.f;
         const float bhalf = btnSz * 0.5f;
@@ -666,7 +652,7 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
         x += btnSz + 4.f;
     }
 
-    // Rewind -10s  (icon font: backward-step)
+    // Rewind -10s
     {
         const float bsz = 28.f;
         ImVec2 bpos = {x, cy - bsz * 0.5f};
@@ -680,7 +666,7 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
         x += bsz + 4.f;
     }
 
-    // Forward +10s  (icon font: forward-step)
+    // Forward +10s
     {
         const float bsz = 28.f;
         ImVec2 bpos = {x, cy - bsz * 0.5f};
@@ -694,7 +680,7 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
         x += bsz + 4.f;
     }
 
-    // Volume icon (icon font) + slider
+    // Volume icon + slider
     {
         const float iconW = 22.f;
         IcoTxt(dl, {x+iconW*.5f, cy}, 13.f, C_TEXT_MUTED, ICO_VOLUME_HIGH);
@@ -705,13 +691,12 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
 
     float rx=pos.x+w-12.f;
 
-    // Fullscreen  (icon font: expand)
-    // IconBtn now takes dl so hover rect goes into the same draw list.
+    // Fullscreen
     rx-=26.f;
     if(IconBtn(dl,"##fs",{rx,cy-13.f},26.f)){}
     IcoTxt(dl, {rx+13.f, cy}, 13.f, C_TEXT_MUTED, ICO_EXPAND);
 
-    // Quality badge (text, unchanged)
+    // Quality badge
     rx-=66.f;
     {
         const float qW=60.f, qH=22.f;
@@ -737,7 +722,7 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
     const float cy=pos.y+h*.5f, by=cy-btnH*.5f;
     float x=pos.x+12.f;
 
-    // Like pill (thumb-up icon + count)
+    // Like pill
     {
         const char* cnt="248K";
         ImVec2 cs=TS(cnt);
@@ -756,7 +741,7 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         Txt(dl,{divX+4.f,cy-cs.y*.5f},C_ACCENT,cnt);
         x+=pillW+gap;
     }
-    // Dislike pill (thumb-down icon + label)
+    // Dislike pill
     {
         const char* lbl="Dislike"; ImVec2 ls=TS(lbl);
         ImVec2 isz=IcoSz(iconSz, ICO_THUMB_DOWN);
@@ -771,7 +756,7 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         x+=pillW+gap;
     }
     dl->AddLine({x+2.f,by+6.f},{x+2.f,by+btnH-6.f},C_BORDER,1.f); x+=8.f;
-    // Share pill (share icon + label)
+    // Share pill
     {
         const char* lbl="Share"; ImVec2 ls=TS(lbl);
         ImVec2 isz=IcoSz(iconSz, ICO_SHARE);
@@ -785,7 +770,7 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         Txt(dl,{x+padLR+isz.x+6.f,cy-ls.y*.5f},hov?C_TEXT:C_TEXT_MUTED,lbl);
         x+=pillW+gap;
     }
-    // Download pill (download icon + label)
+    // Download pill
     {
         const char* lbl="Download"; ImVec2 ls=TS(lbl);
         ImVec2 isz=IcoSz(iconSz, ICO_DOWNLOAD);
@@ -800,7 +785,7 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         x+=pillW+gap;
     }
     dl->AddLine({x+2.f,by+6.f},{x+2.f,by+btnH-6.f},C_BORDER,1.f); x+=8.f;
-    // More pill (ellipsis icon)
+    // More pill
     {
         float pillW=34.f;
         ImGui::SetCursorScreenPos({x,by}); ImGui::InvisibleButton("##more",{pillW,btnH});
@@ -1024,15 +1009,10 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int)
     style.WindowRounding=0; style.FrameRounding=4; style.ScrollbarRounding=4;
     style.FramePadding={4,4}; style.ItemSpacing={6,4};
 
-    // ── Backend init ──────────────────────────────────────────
-    // MUST be called after ImGui::CreateContext() and before any
-    // ImGui_ImplDX9_NewFrame() / ImGui_ImplWin32_NewFrame() call.
     ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplDX9_Init(g_pd3dDev);
 
     // ── Font loading ──────────────────────────────────────────
-    // Step 1: Electrolize (body text) — loaded first so it becomes
-    //         the atlas default and is used by all Txt() / Txt16() calls.
     ImFontConfig cfg;
     cfg.OversampleH=2; cfg.OversampleV=2;
     if(HasElectrolize()){
@@ -1052,16 +1032,13 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int)
     if(!g_font13) g_font13=io.Fonts->AddFontDefault();
     if(!g_font16) g_font16=g_font13;
 
-    // Step 2: Font Awesome 6 Solid (icons only) — loaded as a
-    //         separate atlas entry covering only the PUA block.
-    //         FontDataOwnedByAtlas=false so the stub/real array
-    //         is not freed by ImGui.
+    // Icon font: FA6 Solid, glyph range F000-F8FF only.
     if(HasIconFont()){
         ImFontConfig icoCfg;
         icoCfg.OversampleH          = 2;
         icoCfg.OversampleV          = 2;
         icoCfg.FontDataOwnedByAtlas = false;
-        icoCfg.GlyphMinAdvanceX     = 13.f;  // keep icons monospaced
+        icoCfg.GlyphMinAdvanceX     = 13.f;
         memcpy(icoCfg.Name,"FA6Solid",sizeof(icoCfg.Name));
         g_fontIco = io.Fonts->AddFontFromMemoryTTF(
             const_cast<unsigned char*>(fa6_solid_ttf),
@@ -1070,7 +1047,7 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int)
     }
 
     io.Fonts->Build();
-    io.FontDefault = g_font13;   // text font stays default — never the icon font
+    io.FontDefault = g_font13;
 
     // ── Logo texture ──────────────────────────────────────────
     if(HasLogo()){
