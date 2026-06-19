@@ -176,14 +176,30 @@ bool VideoPlayer::ResolveUrl(const std::string& ytdlpPath,
 bool VideoPlayer::OpenStreams(const std::string& videoUrl,
                                const std::string& audioUrl)
 {
+    // ── Network options ───────────────────────────────────────
+    // tls_verify=0   : XP has no modern CA bundle; mbedtls would
+    //                  reject YouTube's TLS cert otherwise.
+    // user_agent     : some CDNs reject requests without UA.
+    // reconnect=1    : auto-reconnect on short network glitches.
+    // reconnect_streamed=1 : reconnect even on live/chunked streams.
+    AVDictionary* net_opts = nullptr;
+    av_dict_set(&net_opts, "tls_verify",          "0",           0);
+    av_dict_set(&net_opts, "user_agent",
+                "Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36", 0);
+    av_dict_set(&net_opts, "reconnect",           "1",           0);
+    av_dict_set(&net_opts, "reconnect_streamed",  "1",           0);
+
     // Open the video (or muxed) stream
     if (avformat_open_input(&fmt_ctx_,
                              videoUrl.c_str(),
-                             nullptr, nullptr) < 0)
+                             nullptr, &net_opts) < 0)
     {
+        av_dict_free(&net_opts);
         SetError("avformat: cannot open video URL");
         return false;
     }
+    av_dict_free(&net_opts);
+
     if (avformat_find_stream_info(fmt_ctx_, nullptr) < 0) {
         SetError("avformat: cannot find stream info");
         return false;
@@ -208,12 +224,16 @@ bool VideoPlayer::OpenStreams(const std::string& videoUrl,
         fmt_ctx_, AVMEDIA_TYPE_AUDIO, -1, -1, &acodec, 0);
     // Audio is optional — some streams are video-only
 
-    // Video decoder context
+    // ── Video decoder context ─────────────────────────────────
     vdec_ctx_ = avcodec_alloc_context3(vcodec);
     avcodec_parameters_to_context(
         vdec_ctx_,
         fmt_ctx_->streams[vid_stream_]->codecpar);
-    vdec_ctx_->thread_count = 1;  // safe on XP, avoids thread API issues
+    // thread_count=1, thread_type=0: this FFmpeg build was compiled
+    // with --disable-w32threads; frame/slice threading must be off
+    // or avcodec_open2 may try to spawn pthreads that don't exist.
+    vdec_ctx_->thread_count = 1;
+    vdec_ctx_->thread_type  = 0;
     if (avcodec_open2(vdec_ctx_, vcodec, nullptr) < 0) {
         SetError("avcodec: cannot open video decoder");
         return false;
@@ -222,13 +242,14 @@ bool VideoPlayer::OpenStreams(const std::string& videoUrl,
     vid_h_  = vdec_ctx_->height;
     vid_tb_ = av_q2d(fmt_ctx_->streams[vid_stream_]->time_base);
 
-    // Audio decoder context (if stream found)
+    // ── Audio decoder context ─────────────────────────────────
     if (aud_stream_ >= 0 && acodec) {
         adec_ctx_ = avcodec_alloc_context3(acodec);
         avcodec_parameters_to_context(
             adec_ctx_,
             fmt_ctx_->streams[aud_stream_]->codecpar);
         adec_ctx_->thread_count = 1;
+        adec_ctx_->thread_type  = 0;  // same reason as video
         if (avcodec_open2(adec_ctx_, acodec, nullptr) < 0) {
             avcodec_free_context(&adec_ctx_);
             aud_stream_ = -1;  // audio unavailable, continue without
@@ -248,22 +269,27 @@ bool VideoPlayer::OpenStreams(const std::string& videoUrl,
         return false;
     }
 
-    // SwrContext: decoded audio -> PCM s16 stereo 44100 Hz
+    // ── SwrContext: decoded audio -> PCM s16 stereo 44100 Hz ──
     if (adec_ctx_) {
         swr_ctx_ = swr_alloc();
-        AVChannelLayout stereo_layout = AV_CHANNEL_LAYOUT_STEREO;
-        AVChannelLayout src_layout    = adec_ctx_->ch_layout;
-        swr_alloc_set_opts2(&swr_ctx_,
-            &stereo_layout,      AV_SAMPLE_FMT_S16,  AUDIO_SAMPLE_RATE,
-            &src_layout, adec_ctx_->sample_fmt, adec_ctx_->sample_rate,
-            0, nullptr);
-        if (swr_init(swr_ctx_) < 0) {
-            swr_free(&swr_ctx_);
-            swr_ctx_ = nullptr;
+        if (swr_ctx_) {
+            AVChannelLayout stereo_layout = AV_CHANNEL_LAYOUT_STEREO;
+            AVChannelLayout src_layout    = adec_ctx_->ch_layout;
+            // swr_alloc_set_opts2 returns int in swresample 5.x
+            int swr_ret = swr_alloc_set_opts2(
+                &swr_ctx_,
+                &stereo_layout, AV_SAMPLE_FMT_S16,  AUDIO_SAMPLE_RATE,
+                &src_layout, adec_ctx_->sample_fmt, adec_ctx_->sample_rate,
+                0, nullptr);
+            if (swr_ret < 0 || swr_init(swr_ctx_) < 0) {
+                swr_free(&swr_ctx_);
+                swr_ctx_ = nullptr;
+                // Non-fatal: video will still play without audio
+            }
         }
     }
 
-    // Allocate ring buffer pixel planes
+    // ── Allocate ring buffer pixel planes ─────────────────────
     int plane_sz = vid_w_ * vid_h_ * 4;
     for (int i = 0; i < RING_SIZE; i++) {
         ring_[i].buf   = (unsigned char*)malloc(plane_sz);
@@ -334,7 +360,8 @@ void CALLBACK VideoPlayer::WaveOutCallback(
     DWORD_PTR dwInstance, DWORD_PTR, DWORD_PTR)
 {
     if (uMsg == WOM_DONE) {
-        VideoPlayer* self = reinterpret_cast<VideoPlayer*>(dwInstance);
+        VideoPlayer* self = reinterpret_cast<VideoPlayer*>(
+            (uintptr_t)dwInstance);
         SetEvent(self->wave_done_event_);
     }
 }
@@ -525,8 +552,6 @@ void VideoPlayer::DecodeLoop()
             SetEvent(ring_not_empty_);
 
             // Frame-rate throttle: target ~60 fps max in decode thread
-            // to avoid running ahead too far and filling the ring.
-            // Real A/V sync is handled in Update() on the main thread.
             Sleep(4);
 
             av_frame_unref(frame);
@@ -591,12 +616,14 @@ bool VideoPlayer::Open(const std::string& ytUrl,
         wfx.nBlockAlign     = wfx.nChannels * (wfx.wBitsPerSample / 8);
         wfx.nAvgBytesPerSec = wfx.nSamplesPerSec * wfx.nBlockAlign;
 
+        // Cast via uintptr_t for safe pointer-to-integer conversion
+        // on MinGW i686 targeting XP SDK (DWORD_PTR = DWORD on x86)
         MMRESULT mr = waveOutOpen(
             &wave_out_,
             WAVE_MAPPER,
             &wfx,
-            (DWORD_PTR)WaveOutCallback,
-            (DWORD_PTR)this,
+            (DWORD_PTR)(uintptr_t)WaveOutCallback,
+            (DWORD_PTR)(uintptr_t)this,
             CALLBACK_FUNCTION);
         if (mr != MMSYSERR_NOERROR) {
             wave_out_ = nullptr;  // audio unavailable, continue without
@@ -639,28 +666,44 @@ bool VideoPlayer::Update()
 
     if (!has_frame) return false;
 
-    // Simple A/V sync: compare video PTS against waveOut position.
-    // If video is running more than 100 ms ahead, skip this frame.
-    // If video is running more than 100 ms behind, display immediately.
+    // ── A/V sync via waveOut position ─────────────────────────
+    // waveOutGetPosition may return in units other than TIME_BYTES
+    // on old XP audio drivers — check wType in the response and
+    // handle both TIME_BYTES and TIME_SAMPLES gracefully.
     if (wave_out_) {
         MMTIME mmt = {};
         mmt.wType = TIME_BYTES;
         if (waveOutGetPosition(wave_out_, &mmt, sizeof(mmt))
             == MMSYSERR_NOERROR)
         {
-            double audio_pos_sec =
-                (double)mmt.u.cb
-                / (double)(AUDIO_CHANNELS
-                           * sizeof(short)
-                           * AUDIO_SAMPLE_RATE);
+            double audio_pos_sec = 0.0;
+            if (mmt.wType == TIME_BYTES) {
+                audio_pos_sec =
+                    (double)mmt.u.cb
+                    / (double)(AUDIO_CHANNELS
+                               * (int)sizeof(short)
+                               * AUDIO_SAMPLE_RATE);
+            } else if (mmt.wType == TIME_SAMPLES) {
+                audio_pos_sec =
+                    (double)mmt.u.sample
+                    / (double)AUDIO_SAMPLE_RATE;
+            } else if (mmt.wType == TIME_MS) {
+                audio_pos_sec = (double)mmt.u.ms / 1000.0;
+            }
+            // else: unknown unit — skip sync check this frame
 
-            EnterCriticalSection(&ring_cs_);
-            double vid_pts = ring_[ring_read_].pts;
-            LeaveCriticalSection(&ring_cs_);
+            if (mmt.wType == TIME_BYTES   ||
+                mmt.wType == TIME_SAMPLES ||
+                mmt.wType == TIME_MS)
+            {
+                EnterCriticalSection(&ring_cs_);
+                double vid_pts = ring_[ring_read_].pts;
+                LeaveCriticalSection(&ring_cs_);
 
-            double diff = vid_pts - audio_pos_sec;
-            if (diff > 0.1) return false;   // video ahead — wait
-            // If diff < -0.1 the video is behind; fall through and display
+                double diff = vid_pts - audio_pos_sec;
+                if (diff > 0.1) return false;   // video ahead — wait
+                // If diff < -0.1 video is behind — fall through and display
+            }
         }
     }
 
