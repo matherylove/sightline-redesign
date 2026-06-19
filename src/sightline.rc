@@ -1,0 +1,11 @@
+// Sightline — Windows resource script
+// Compiled with: windres sightline.rc -o sightline_res.o
+// Then linked alongside main.obj.
+//
+// Compatible: XP SP3 x86, Vista x86/x64, 7+ x86/x64.
+// windres understands this syntax on all MinGW-w64 targets.
+
+#include <windows.h>
+
+// Resource ID 1 = application icon (shown in taskbar, ALT+TAB, title bar)
+1 ICON "favicon.ico"
