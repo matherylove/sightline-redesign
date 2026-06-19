@@ -307,6 +307,7 @@ static void IconThumbUp(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
     dl->PathLineTo({c.x,c.y+hh});
     dl->PathStroke(col,true,1.3f);
     dl->AddRectFilled({c.x-hw,c.y-hh*.1f},{c.x-hw+r*.22f,c.y-hh*.1f+r*.1f},col,1.f);
+    (void)stem;
 }
 static void IconThumbDown(ImDrawList* dl,ImVec2 c,float r,ImU32 col)
 {
@@ -383,8 +384,6 @@ static bool SeekBar(ImDrawList* dl,ImVec2 pos,float width,float height,
 
     // FIX: padX increased to 8 so the thumb circle (r=5.5) is fully
     // contained within the widget at val=0 and val=1.
-    // Previously 6px was exactly the circle radius, causing the left/right
-    // edges of the thumb to paint 0.5px outside the widget bounds.
     const float padX   = 8.f;
     const float railX0 = pos.x + padX;
     const float railW  = width - padX * 2.f;
@@ -422,8 +421,6 @@ static bool VolBar(ImDrawList* dl,ImVec2 pos,float width,float height,float* val
     bool hov=ImGui::IsItemHovered();
     bool act=ImGui::IsItemActive();
 
-    // FIX: same 8px padding applied to VolBar so thumb at val=0 doesn't
-    // paint at the raw left edge of the widget.
     const float padX   = 8.f;
     const float railX0 = pos.x + padX;
     const float railW  = width - padX * 2.f;
@@ -471,8 +468,6 @@ static void DrawTitlebar(ImDrawList* dl,ImVec2 pos,float w)
     // ── Logo (left) ───────────────────────────────────────────
     if(g_logoTex && g_logoTexW>0 && g_logoTexH>0){
         // Fit the logo PNG into the titlebar, capped at 140px wide.
-        // Use a taller logoAreaH so the PNG is constrained by width
-        // rather than height — giving a properly sized logo in the bar.
         float logoAreaH = h + 16.f;
         float logoAreaY = pos.y + (h - logoAreaH) * 0.5f;
         float aspect    = (float)g_logoTexW / (float)g_logoTexH;
@@ -485,13 +480,15 @@ static void DrawTitlebar(ImDrawList* dl,ImVec2 pos,float w)
         dl->AddImage((ImTextureID)(uintptr_t)g_logoTex,
             {logoX,logoY},{logoX+dstW,logoY+logoAreaH});
     } else {
-        // Fallback: animated logo sprite
-        float r=10.f;
+        // Fallback: inline animated accent dot (no external sprite needed)
+        float r=9.f;
         float logoX=pos.x+r+8.f, logoY=pos.y+h*.5f;
         ImGui::SetCursorScreenPos({logoX-r-4.f, pos.y});
         ImGui::InvisibleButton("##logo",{r*2.f+4.f,h});
-        DrawLogoSprite(dl,{logoX,logoY},r,C_ACCENT,
-            (float)ImGui::GetTime());
+        float t=(float)ImGui::GetTime();
+        dl->AddCircle({logoX,logoY},r,C_ACCENT,16,1.5f);
+        float ax=logoX+r*0.6f*cosf(t*2.f), ay=logoY+r*0.6f*sinf(t*2.f);
+        dl->AddCircleFilled({ax,ay},3.f,C_ACCENT,8);
     }
 
     // ── Nav tabs (centre) ─────────────────────────────────────
@@ -549,13 +546,9 @@ static void DrawTitlebar(ImDrawList* dl,ImVec2 pos,float w)
 //               → bottom of text ≈ Y+35, leaving ~4px gap before buttons
 //   [40.. 72]   buttons / volume / quality row  (cy at bar_top+54)
 //
-// FIX: h was 62, cy was pos.y+47.
-//      timeY=seekY+seekH+2=24, text height≈13 → text bottom≈37.
-//      Button top = cy-bhalf = 47-14 = 33 → text and button overlapped.
-//      Increasing h to 72 and cy to pos.y+54 gives 4px clear margin.
 static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
 {
-    const float h      = 72.f;   // FIX: was 62
+    const float h      = 72.f;
     const float seekH  = 14.f;
     const float seekY  = pos.y + 8.f;
 
@@ -580,12 +573,7 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
     }
 
     // ── Button / control row ──────────────────────────────────
-    // FIX: cy was pos.y+47 — now pos.y+54 to clear the time labels above.
-    // FIX: all draw calls use dl (the draw list passed as parameter).
-    //      Previously a second wdl=GetWindowDrawList() was used for the
-    //      button row, mixing two draw lists and causing hover rects to
-    //      render in the wrong channel (behind the seek bar).
-    const float cy = pos.y + 54.f;   // FIX: was pos.y + 47.f
+    const float cy = pos.y + 54.f;
     float x = pos.x + 12.f;
 
     // Play/Pause
@@ -680,14 +668,9 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
 
     // Like pill  ── thumb-up icon  |  count ────────────────────
     {
-        float divX, pillW;
-        {
-            ImVec2 cs=TS("24K");
-            pillW=padLR+iconR*2.f+6.f+cs.x+padLR+gap+padLR+iconR*2.f+padLR;
-            divX=x+padLR+iconR*2.f+6.f+cs.x+padLR;
-        }
         ImVec2 cs=TS("24K");
-        pillW=padLR+iconR*2.f+6.f+cs.x+padLR;
+        float pillW=padLR+iconR*2.f+6.f+cs.x+padLR;
+        float divX;
         ImGui::SetCursorScreenPos({x,by});
         ImGui::InvisibleButton("##like",{pillW,btnH});
         bool hov=ImGui::IsItemHovered();
@@ -698,7 +681,7 @@ static void DrawActionBar(ImDrawList* dl,ImVec2 pos,float w)
         IconThumbUp(wdl,{iconCX,cy},iconR,C_ACCENT);
         divX=x+padLR+iconR*2.f+6.f;
         wdl->AddLine({divX,by+6.f},{divX,by+btnH-6.f},C_ACCENT_LINE,1.f);
-        Txt(wdl,{divX+4.f,cy-cs.y*.5f},C_ACCENT,cnt);
+        Txt(wdl,{divX+4.f,cy-cs.y*.5f},C_ACCENT,"24K");
         x+=pillW+gap;
     }
 
@@ -898,7 +881,6 @@ static void DrawAutoplay(ImDrawList* dl,ImVec2 pos,float w)
     RectFill(dl,{kx,ky},{kw,kh},trackC,kh*.5f);
     float cx=g_autoplay?(kx+kw-kh*.5f-2.f):(kx+kh*.5f+2.f);
     dl->AddCircleFilled({cx,ky+kh*.5f},kh*.5f-2.f,C_TEXT,12);
-    // "ON" indicator: small white circle centred in the left half of the track
     if(g_autoplay){
         float dotX=kx+kh*.5f+2.f, dotY=ky+kh*.5f;
         dl->AddCircleFilled({dotX,dotY},2.5f,COL32(255,255,255,200),8);
@@ -910,7 +892,7 @@ static void DrawAutoplay(ImDrawList* dl,ImVec2 pos,float w)
 // ─── render frame ────────────────────────────────────────────
 static const float TITLEBAR_H   = 38.f;
 static const float VIDEO_H      = 300.f;
-static const float CTRL_H       = 72.f;   // FIX: was 62 (matches DrawControls)
+static const float CTRL_H       = 72.f;
 static const float ACTION_H     = 46.f;
 static const float DESC_H       = 110.f;
 static const float SIDEBAR_W    = 220.f;
@@ -929,11 +911,12 @@ static void RenderFrame(ImDrawList* dl,float W,float H)
     DrawActionBar(dl,{0,y},mainW);       y+=ACTION_H;
 
     float descY=y, descW=mainW-120.f;
-    DrawDescription(dl,{0,descY},descW); 
+    DrawDescription(dl,{0,descY},descW);
     DrawSubscribeBtn(dl,{descW+8.f,descY+8.f},104.f);
     y+=DESC_H+8.f;
 
     DrawAutoplay(dl,{8.f,y},mainW-16.f);
+    (void)AUTOPLAY_H;
 }
 
 // ─── ImGui window wrapper ─────────────────────────────────────
@@ -966,7 +949,7 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int)
     CoInitialize(NULL);
 
     WNDCLASSEXA wc={sizeof(wc),CS_CLASSDC,WndProc,0,0,hInst,
-        LoadIconA(hInst,MAKEINTRESOURCEA(IDI_APP_ICON)),
+        LoadIconA(hInst,MAKEINTRESOURCEA(1)),
         NULL,NULL,NULL,"SightlineWnd",NULL};
     RegisterClassExA(&wc);
     g_hwnd=CreateWindowExA(0,"SightlineWnd","Sightline",
@@ -990,11 +973,9 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int)
     ImGui_ImplDX9_Init(g_pd3dDev);
 
     // ── Font loading ──────────────────────────────────────────
-    // Build atlas once. Load Electrolize if available; fall back to ProggyClean.
     ImFontConfig cfg;
     cfg.OversampleH=2; cfg.OversampleV=2;
     if(HasElectrolize()){
-        // Two sizes: 13 (labels/metadata) and 16 (body/nav)
         cfg.FontDataOwnedByAtlas=false;
         memcpy(cfg.Name,"Electrolize13",sizeof(cfg.Name));
         g_font13=io.Fonts->AddFontFromMemoryTTF(
@@ -1008,8 +989,6 @@ int WINAPI WinMain(HINSTANCE hInst,HINSTANCE,LPSTR,int)
             16.f,&cfg,g_glyph_ranges);
     }
     if(!g_font13){
-        // ProggyClean embedded in ImGui — always available.
-        // It's a bitmap font (13px), pixel-perfect at 1:1 scale.
         g_font13=io.Fonts->AddFontDefault();
     }
     if(!g_font16) g_font16=g_font13;
