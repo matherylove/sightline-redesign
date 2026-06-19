@@ -668,16 +668,21 @@ static void DrawVideoArea(ImDrawList* dl,ImVec2 pos,float w,float h)
 }
 
 // ─── controls bar ────────────────────────────────────────────
-// Layout (top→bottom, bar height = 62px):
+// Layout (top→bottom, bar height = 72px):
 //
 //   [0 .. 8]    top padding
 //   [8 .. 22]   seek rail hit-area  (14 px tall)
-//   [22.. 36]   time labels row     (rendered at seekY+seekH+2)
-//   [36.. 62]   buttons / volume / quality row  (cy at bar_top+47)
+//   [22.. 40]   time labels row     (rendered at seekY+seekH+2, ~13px tall)
+//               → bottom of text ≈ Y+35, leaving ~4px gap before buttons
+//   [40.. 72]   buttons / volume / quality row  (cy at bar_top+54)
 //
+// FIX: h was 62, cy was pos.y+47.
+//      timeY=seekY+seekH+2=24, text height≈13 → text bottom≈37.
+//      Button top = cy-bhalf = 47-14 = 33 → text and button overlapped.
+//      Increasing h to 72 and cy to pos.y+54 gives 4px clear margin.
 static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
 {
-    const float h      = 62.f;
+    const float h      = 72.f;   // FIX: was 62
     const float seekH  = 14.f;
     const float seekY  = pos.y + 8.f;
 
@@ -702,10 +707,13 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
     }
 
     // ── Button / control row ──────────────────────────────────
-    const float cy = pos.y + 47.f;
+    // FIX: cy was pos.y+47 — now pos.y+54 to clear the time labels above.
+    // FIX: all draw calls use dl (the draw list passed as parameter).
+    //      Previously a second wdl=GetWindowDrawList() was used for the
+    //      button row, mixing two draw lists and causing hover rects to
+    //      render in the wrong channel (behind the seek bar).
+    const float cy = pos.y + 54.f;   // FIX: was pos.y + 47.f
     float x = pos.x + 12.f;
-
-    ImDrawList* wdl = ImGui::GetWindowDrawList();
 
     // Play/Pause
     {
@@ -717,18 +725,14 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
         bool hov = ImGui::IsItemHovered();
         if(ImGui::IsItemActivated()) g_playing = !g_playing;
         ImU32 bg = hov ? C_SURFACE3 : C_SURFACE2;
-        wdl->AddRectFilled(bpos,{bpos.x+btnSz,bpos.y+btnSz},bg,5.f);
-        wdl->AddRect(bpos,{bpos.x+btnSz,bpos.y+btnSz},hov?C_BORDER_STR:C_BORDER,5.f,0,1.f);
+        dl->AddRectFilled(bpos,{bpos.x+btnSz,bpos.y+btnSz},bg,5.f);
+        dl->AddRect(bpos,{bpos.x+btnSz,bpos.y+btnSz},hov?C_BORDER_STR:C_BORDER,5.f,0,1.f);
         ImVec2 ic = {bpos.x + btnSz * 0.5f, bpos.y + btnSz * 0.5f};
-        if(g_playing) IconPause(wdl,ic,8.f,C_TEXT);
-        else          IconPlay (wdl,ic,8.f,C_TEXT);
+        if(g_playing) IconPause(dl,ic,8.f,C_TEXT);
+        else          IconPlay (dl,ic,8.f,C_TEXT);
         x += btnSz + 4.f;
     }
 
-    // FIX: -10s / +10s — inline InvisibleButton so IconSkip always
-    //      paints on top of the hover rect with the same draw list.
-    //      Icon radius raised to 11.f so the arc + "10" label fit
-    //      comfortably inside the 28px button.
     // Rewind -10s
     {
         const float bsz = 28.f;
@@ -737,8 +741,8 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
         ImGui::InvisibleButton("##m10",{bsz,bsz});
         bool hov     = ImGui::IsItemHovered();
         bool clicked = ImGui::IsItemActivated();
-        if(hov) wdl->AddRectFilled(bpos,{bpos.x+bsz,bpos.y+bsz},COL32(255,255,255,20),4.f);
-        IconSkip(wdl,{x + bsz * 0.5f, cy},11.f,C_TEXT_MUTED,false);
+        if(hov) dl->AddRectFilled(bpos,{bpos.x+bsz,bpos.y+bsz},COL32(255,255,255,20),4.f);
+        IconSkip(dl,{x + bsz * 0.5f, cy},11.f,C_TEXT_MUTED,false);
         if(clicked){ g_seek -= 10.f/600.f; if(g_seek<0.f) g_seek=0.f; }
         x += bsz + 4.f;
     }
@@ -751,8 +755,8 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
         ImGui::InvisibleButton("##p10",{bsz,bsz});
         bool hov     = ImGui::IsItemHovered();
         bool clicked = ImGui::IsItemActivated();
-        if(hov) wdl->AddRectFilled(bpos,{bpos.x+bsz,bpos.y+bsz},COL32(255,255,255,20),4.f);
-        IconSkip(wdl,{x + bsz * 0.5f, cy},11.f,C_TEXT_MUTED,true);
+        if(hov) dl->AddRectFilled(bpos,{bpos.x+bsz,bpos.y+bsz},COL32(255,255,255,20),4.f);
+        IconSkip(dl,{x + bsz * 0.5f, cy},11.f,C_TEXT_MUTED,true);
         if(clicked){ g_seek += 10.f/600.f; if(g_seek>1.f) g_seek=1.f; }
         x += bsz + 4.f;
     }
@@ -760,10 +764,10 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
     // Volume icon + slider
     {
         const float iconW = 22.f;
-        IconVolume(wdl,{x+iconW*.5f,cy},9.f,C_TEXT_MUTED);
+        IconVolume(dl,{x+iconW*.5f,cy},9.f,C_TEXT_MUTED);
         x += iconW + 4.f;
     }
-    VolBar(wdl,{x,cy-7.f},72.f,14.f,&g_vol);
+    VolBar(dl,{x,cy-7.f},72.f,14.f,&g_vol);
     x += 72.f + 6.f;
 
     float rx=pos.x+w-12.f;
@@ -771,21 +775,21 @@ static void DrawControls(ImDrawList* dl,ImVec2 pos,float w)
     // Fullscreen (right-anchored)
     rx-=26.f;
     if(IconBtn("##fs",{rx,cy-13.f},26.f)){}
-    IconFullscreen(wdl,{rx+13.f,cy},9.f,C_TEXT_MUTED);
+    IconFullscreen(dl,{rx+13.f,cy},9.f,C_TEXT_MUTED);
 
     // Quality badge
     rx-=66.f;
     {
         const float qW=60.f, qH=22.f;
         const float qX=rx, qY=cy-qH*.5f;
-        RectFill(wdl,{qX,qY},{qW,qH},C_SURFACE2,5.f);
-        Rect(wdl,{qX,qY},{qW,qH},C_BORDER,5.f);
+        RectFill(dl,{qX,qY},{qW,qH},C_SURFACE2,5.f);
+        Rect(dl,{qX,qY},{qW,qH},C_BORDER,5.f);
         ImGui::SetCursorScreenPos({qX,qY});
         ImGui::InvisibleButton("##qual",{qW,qH});
         if(ImGui::IsItemActivated()) g_quality=(g_quality+1)%g_qualityCount;
         const char* qlbl=g_qualityOpts[g_quality];
         ImVec2 qts=TS(qlbl);
-        Txt(wdl,{qX+(qW-qts.x)*.5f, qY+(qH-qts.y)*.5f},C_ACCENT,qlbl);
+        Txt(dl,{qX+(qW-qts.x)*.5f, qY+(qH-qts.y)*.5f},C_ACCENT,qlbl);
     }
 }
 
@@ -1025,7 +1029,8 @@ static void RenderFrame()
 
     ImDrawList* dl=ImGui::GetWindowDrawList();
 
-    const float TB_H  =38.f, SB_H=22.f, CTRL_H=62.f, ACT_H=46.f;
+    // FIX: CTRL_H updated from 62 to 72 to match DrawControls h.
+    const float TB_H  =38.f, SB_H=22.f, CTRL_H=72.f, ACT_H=46.f;
     const float SIDE_W=300.f, MAIN_W=sw-SIDE_W;
 
     float contentH=sh-TB_H-SB_H;
