@@ -14,7 +14,6 @@
 #include <mmsystem.h>
 #include <d3d9.h>
 
-// FFmpeg C headers — must be extern "C" in C++ translation unit
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
@@ -34,6 +33,9 @@ extern "C" {
 
 // ── Global singleton ─────────────────────────────────────────
 VideoPlayer g_player;
+
+// ── Global yt-dlp path (set by YtDlp_EnsureAvailable) ────────
+std::string g_ytdlp_path;
 
 // ── Constructor ──────────────────────────────────────────────
 VideoPlayer::VideoPlayer()
@@ -57,108 +59,145 @@ void VideoPlayer::SetError(const char* msg)
 
 // ─────────────────────────────────────────────────────────────
 //  ResolveUrl  — run yt-dlp.exe via CreateProcessA + pipe
-//  Returns the direct video URL (and optionally audio URL for
-//  DASH streams) into outVideoUrl / outAudioUrl.
+//
+//  Format selection strategy (qualityH = requested max height):
+//
+//  1. Try height-filtered H.264 MP4:
+//       bestvideo[height<=H][ext=mp4][vcodec^=avc]+bestaudio/best
+//
+//  2. Fallback (when step 1 returns empty): unfiltered H.264:
+//       bestvideo[ext=mp4][vcodec^=avc]+bestaudio/best
+//
+//  3. Last resort: any format yt-dlp chooses.
+//
+//  H.264/MP4 is preferred over VP9/AV1/WebM because:
+//  - FFmpeg XP-mod has a well-tested AVC decoder on i686.
+//  - Software decode of VP9 is significantly heavier on the CPU,
+//    making 360p/60fps impossible on an Atom N450.
 // ─────────────────────────────────────────────────────────────
 bool VideoPlayer::ResolveUrl(const std::string& ytdlpPath,
                               const std::string& ytUrl,
+                              int                qualityH,
                               std::string& outVideoUrl,
                               std::string& outAudioUrl)
 {
-    // Build command line:
-    // yt-dlp.exe -f "bestvideo[ext=mp4][vcodec^=avc]+bestaudio/best"
-    //            --get-url <ytUrl>
-    //
-    // The format selector prefers AVC (H.264) because FFmpeg XP-mod
-    // has a reliable AVC decoder; VP9/AV1 may work but aren't
-    // guaranteed on all XP builds.
-    std::string cmd;
-    cmd  = "\"";
-    cmd += ytdlpPath;
-    cmd += "\"";
-    cmd += " -f \"bestvideo[ext=mp4][vcodec^=avc]+bestaudio/best\""
-            " --no-playlist --get-url \"";
-    cmd += ytUrl;
-    cmd += "\"";
-
-    SECURITY_ATTRIBUTES sa = {};
-    sa.nLength        = sizeof(sa);
-    sa.bInheritHandle = TRUE;
-
-    HANDLE hRead = nullptr, hWrite = nullptr;
-    if (!CreatePipe(&hRead, &hWrite, &sa, 0))
-        return false;
-
-    // Ensure the read end is not inherited by the child
-    SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
-
-    STARTUPINFOA si = {};
-    si.cb         = sizeof(si);
-    si.dwFlags    = STARTF_USESTDHANDLES;
-    si.hStdOutput = hWrite;
-    si.hStdError  = GetStdHandle(STD_ERROR_HANDLE);
-    si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
-
-    PROCESS_INFORMATION pi = {};
-    // CreateProcessA requires a mutable buffer
-    std::vector<char> cmdBuf(cmd.begin(), cmd.end());
-    cmdBuf.push_back('\0');
-
-    BOOL ok = CreateProcessA(
-        NULL, cmdBuf.data(),
-        NULL, NULL,
-        TRUE,                     // inherit handles
-        CREATE_NO_WINDOW,         // no console window on XP
-        NULL, NULL,
-        &si, &pi
-    );
-    CloseHandle(hWrite);  // close write end before reading
-
-    if (!ok) {
-        CloseHandle(hRead);
-        SetError("yt-dlp: CreateProcess failed");
-        return false;
+    // Build the -f format string.
+    // qualityH == 0 means "auto" — skip height filter.
+    char fmtBuf[256];
+    if (qualityH > 0) {
+        _snprintf(fmtBuf, sizeof(fmtBuf),
+            "bestvideo[height<=%d][ext=mp4][vcodec^=avc]"
+            "+bestaudio/best[height<=%d][ext=mp4]"
+            "/bestvideo[ext=mp4][vcodec^=avc]+bestaudio/best"
+            "/best",
+            qualityH, qualityH);
+    } else {
+        _snprintf(fmtBuf, sizeof(fmtBuf),
+            "bestvideo[ext=mp4][vcodec^=avc]+bestaudio/best"
+            "/best");
     }
 
-    // Read all stdout (max 8 KB — two URLs fit easily)
-    std::string output;
-    output.reserve(2048);
-    char buf[1024];
-    DWORD bytesRead = 0;
-    while (ReadFile(hRead, buf, sizeof(buf) - 1, &bytesRead, NULL)
-           && bytesRead > 0)
-    {
-        buf[bytesRead] = '\0';
-        output += buf;
+    // ── Helper lambda (via struct for C++03 compat on XP SDK) ─
+    // Runs yt-dlp once with a given -f string and writes output.
+    struct Runner {
+        static bool Run(const std::string& exe,
+                        const char*        fmt,
+                        const std::string& url,
+                        std::string&       out)
+        {
+            std::string cmd;
+            cmd  = "\"";
+            cmd += exe;
+            cmd += "\" -f \"";
+            cmd += fmt;
+            cmd += "\" --no-playlist --get-url \"";
+            cmd += url;
+            cmd += "\"";
+
+            SECURITY_ATTRIBUTES sa = {};
+            sa.nLength        = sizeof(sa);
+            sa.bInheritHandle = TRUE;
+
+            HANDLE hRead = nullptr, hWrite = nullptr;
+            if (!CreatePipe(&hRead, &hWrite, &sa, 0)) return false;
+            SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
+
+            STARTUPINFOA si = {};
+            si.cb         = sizeof(si);
+            si.dwFlags    = STARTF_USESTDHANDLES;
+            si.hStdOutput = hWrite;
+            si.hStdError  = GetStdHandle(STD_ERROR_HANDLE);
+            si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
+
+            PROCESS_INFORMATION pi = {};
+            std::vector<char> cmdBuf(cmd.begin(), cmd.end());
+            cmdBuf.push_back('\0');
+
+            BOOL ok = CreateProcessA(
+                NULL, cmdBuf.data(),
+                NULL, NULL,
+                TRUE, CREATE_NO_WINDOW,
+                NULL, NULL, &si, &pi);
+            CloseHandle(hWrite);
+
+            if (!ok) { CloseHandle(hRead); return false; }
+
+            out.clear();
+            out.reserve(2048);
+            char buf[1024];
+            DWORD bytesRead = 0;
+            while (ReadFile(hRead, buf, sizeof(buf)-1, &bytesRead, NULL)
+                   && bytesRead > 0)
+            {
+                buf[bytesRead] = '\0';
+                out += buf;
+            }
+            CloseHandle(hRead);
+
+            WaitForSingleObject(pi.hProcess, 60000);
+            DWORD exit = 1;
+            GetExitCodeProcess(pi.hProcess, &exit);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+
+            return (exit == 0 && !out.empty());
+        }
+    };
+
+    // ── Attempt 1: height-filtered H.264 ─────────────────────
+    std::string raw;
+    bool ok = Runner::Run(ytdlpPath, fmtBuf, ytUrl, raw);
+
+    // ── Attempt 2: fallback — unfiltered H.264 ───────────────
+    if (!ok || raw.empty()) {
+        const char* fallback =
+            "bestvideo[ext=mp4][vcodec^=avc]+bestaudio/best/best";
+        ok = Runner::Run(ytdlpPath, fallback, ytUrl, raw);
     }
-    CloseHandle(hRead);
 
-    // Wait for yt-dlp to finish (give it 60 s)
-    WaitForSingleObject(pi.hProcess, 60000);
-    DWORD exitCode = 1;
-    GetExitCodeProcess(pi.hProcess, &exitCode);
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
+    // ── Attempt 3: last resort — let yt-dlp choose ───────────
+    if (!ok || raw.empty()) {
+        ok = Runner::Run(ytdlpPath, "best", ytUrl, raw);
+    }
 
-    if (exitCode != 0 || output.empty()) {
+    if (!ok || raw.empty()) {
         SetError("yt-dlp: failed to resolve URL (check network / yt-dlp version)");
         return false;
     }
 
-    // Split output on newlines — yt-dlp returns 1 URL (muxed) or 2
-    // (video URL \n audio URL) depending on the format selected.
-    size_t nl = output.find('\n');
+    // ── Parse newline-separated output ───────────────────────
+    // Strip trailing whitespace first
+    while (!raw.empty() &&
+           (raw.back() == '\r' || raw.back() == '\n' || raw.back() == ' '))
+        raw.pop_back();
+
+    size_t nl = raw.find('\n');
     if (nl == std::string::npos) {
-        // Strip trailing CR/LF
-        while (!output.empty() &&
-               (output.back() == '\r' || output.back() == '\n'))
-            output.pop_back();
-        outVideoUrl = output;
+        outVideoUrl = raw;
         outAudioUrl = "";
     } else {
-        outVideoUrl = output.substr(0, nl);
-        outAudioUrl = output.substr(nl + 1);
-        // Strip CR/LF
+        outVideoUrl = raw.substr(0, nl);
+        outAudioUrl = raw.substr(nl + 1);
         while (!outVideoUrl.empty() &&
                (outVideoUrl.back() == '\r' || outVideoUrl.back() == '\n'))
             outVideoUrl.pop_back();
@@ -176,20 +215,13 @@ bool VideoPlayer::ResolveUrl(const std::string& ytdlpPath,
 bool VideoPlayer::OpenStreams(const std::string& videoUrl,
                                const std::string& audioUrl)
 {
-    // ── Network options ───────────────────────────────────────
-    // tls_verify=0   : XP has no modern CA bundle; mbedtls would
-    //                  reject YouTube's TLS cert otherwise.
-    // user_agent     : some CDNs reject requests without UA.
-    // reconnect=1    : auto-reconnect on short network glitches.
-    // reconnect_streamed=1 : reconnect even on live/chunked streams.
     AVDictionary* net_opts = nullptr;
-    av_dict_set(&net_opts, "tls_verify",          "0",           0);
+    av_dict_set(&net_opts, "tls_verify",         "0",           0);
     av_dict_set(&net_opts, "user_agent",
                 "Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36", 0);
-    av_dict_set(&net_opts, "reconnect",           "1",           0);
-    av_dict_set(&net_opts, "reconnect_streamed",  "1",           0);
+    av_dict_set(&net_opts, "reconnect",          "1",           0);
+    av_dict_set(&net_opts, "reconnect_streamed", "1",           0);
 
-    // Open the video (or muxed) stream
     if (avformat_open_input(&fmt_ctx_,
                              videoUrl.c_str(),
                              nullptr, &net_opts) < 0)
@@ -205,11 +237,9 @@ bool VideoPlayer::OpenStreams(const std::string& videoUrl,
         return false;
     }
 
-    // Duration
     if (fmt_ctx_->duration != AV_NOPTS_VALUE)
         dur_sec_ = (double)fmt_ctx_->duration / (double)AV_TIME_BASE;
 
-    // Find best video stream
     const AVCodec* vcodec = nullptr;
     vid_stream_ = av_find_best_stream(
         fmt_ctx_, AVMEDIA_TYPE_VIDEO, -1, -1, &vcodec, 0);
@@ -218,20 +248,14 @@ bool VideoPlayer::OpenStreams(const std::string& videoUrl,
         return false;
     }
 
-    // Find best audio stream (may be in the same container)
     const AVCodec* acodec = nullptr;
     aud_stream_ = av_find_best_stream(
         fmt_ctx_, AVMEDIA_TYPE_AUDIO, -1, -1, &acodec, 0);
-    // Audio is optional — some streams are video-only
 
-    // ── Video decoder context ─────────────────────────────────
     vdec_ctx_ = avcodec_alloc_context3(vcodec);
     avcodec_parameters_to_context(
         vdec_ctx_,
         fmt_ctx_->streams[vid_stream_]->codecpar);
-    // thread_count=1, thread_type=0: this FFmpeg build was compiled
-    // with --disable-w32threads; frame/slice threading must be off
-    // or avcodec_open2 may try to spawn pthreads that don't exist.
     vdec_ctx_->thread_count = 1;
     vdec_ctx_->thread_type  = 0;
     if (avcodec_open2(vdec_ctx_, vcodec, nullptr) < 0) {
@@ -242,24 +266,22 @@ bool VideoPlayer::OpenStreams(const std::string& videoUrl,
     vid_h_  = vdec_ctx_->height;
     vid_tb_ = av_q2d(fmt_ctx_->streams[vid_stream_]->time_base);
 
-    // ── Audio decoder context ─────────────────────────────────
     if (aud_stream_ >= 0 && acodec) {
         adec_ctx_ = avcodec_alloc_context3(acodec);
         avcodec_parameters_to_context(
             adec_ctx_,
             fmt_ctx_->streams[aud_stream_]->codecpar);
         adec_ctx_->thread_count = 1;
-        adec_ctx_->thread_type  = 0;  // same reason as video
+        adec_ctx_->thread_type  = 0;
         if (avcodec_open2(adec_ctx_, acodec, nullptr) < 0) {
             avcodec_free_context(&adec_ctx_);
-            aud_stream_ = -1;  // audio unavailable, continue without
+            aud_stream_ = -1;
         } else {
             aud_tb_ = av_q2d(
                 fmt_ctx_->streams[aud_stream_]->time_base);
         }
     }
 
-    // SwsContext: decoded pixel format -> BGRA (D3D9 D3DFMT_A8R8G8B8)
     sws_ctx_ = sws_getContext(
         vid_w_, vid_h_, vdec_ctx_->pix_fmt,
         vid_w_, vid_h_, AV_PIX_FMT_BGRA,
@@ -269,13 +291,11 @@ bool VideoPlayer::OpenStreams(const std::string& videoUrl,
         return false;
     }
 
-    // ── SwrContext: decoded audio -> PCM s16 stereo 44100 Hz ──
     if (adec_ctx_) {
         swr_ctx_ = swr_alloc();
         if (swr_ctx_) {
             AVChannelLayout stereo_layout = AV_CHANNEL_LAYOUT_STEREO;
             AVChannelLayout src_layout    = adec_ctx_->ch_layout;
-            // swr_alloc_set_opts2 returns int in swresample 5.x
             int swr_ret = swr_alloc_set_opts2(
                 &swr_ctx_,
                 &stereo_layout, AV_SAMPLE_FMT_S16,  AUDIO_SAMPLE_RATE,
@@ -284,12 +304,10 @@ bool VideoPlayer::OpenStreams(const std::string& videoUrl,
             if (swr_ret < 0 || swr_init(swr_ctx_) < 0) {
                 swr_free(&swr_ctx_);
                 swr_ctx_ = nullptr;
-                // Non-fatal: video will still play without audio
             }
         }
     }
 
-    // ── Allocate ring buffer pixel planes ─────────────────────
     int plane_sz = vid_w_ * vid_h_ * 4;
     for (int i = 0; i < RING_SIZE; i++) {
         ring_[i].buf   = (unsigned char*)malloc(plane_sz);
@@ -305,7 +323,7 @@ bool VideoPlayer::OpenStreams(const std::string& videoUrl,
 }
 
 // ─────────────────────────────────────────────────────────────
-//  CreateTexture — MANAGED pool so it survives device Reset()
+//  CreateTexture
 // ─────────────────────────────────────────────────────────────
 bool VideoPlayer::CreateTexture(int w, int h)
 {
@@ -324,7 +342,7 @@ bool VideoPlayer::CreateTexture(int w, int h)
 }
 
 // ─────────────────────────────────────────────────────────────
-//  UploadFrame — copy BGRA pixels into the D3D9 texture
+//  UploadFrame
 // ─────────────────────────────────────────────────────────────
 bool VideoPlayer::UploadFrame(const RingSlot& slot)
 {
@@ -337,7 +355,6 @@ bool VideoPlayer::UploadFrame(const RingSlot& slot)
     if (lr.Pitch == src_stride) {
         memcpy(lr.pBits, slot.buf, (size_t)slot.w * slot.h * 4);
     } else {
-        // Pitch may differ — copy row by row
         const unsigned char* src = slot.buf;
         unsigned char*       dst = (unsigned char*)lr.pBits;
         for (int y = 0; y < slot.h; y++) {
@@ -352,8 +369,7 @@ bool VideoPlayer::UploadFrame(const RingSlot& slot)
 }
 
 // ─────────────────────────────────────────────────────────────
-//  waveOut callback — fired when a buffer finishes playing
-//  (called from a system thread, keep it tiny)
+//  waveOut callback
 // ─────────────────────────────────────────────────────────────
 void CALLBACK VideoPlayer::WaveOutCallback(
     HWAVEOUT, UINT uMsg,
@@ -367,7 +383,7 @@ void CALLBACK VideoPlayer::WaveOutCallback(
 }
 
 // ─────────────────────────────────────────────────────────────
-//  AudioLoop — feeds decoded PCM to waveOut
+//  AudioLoop
 // ─────────────────────────────────────────────────────────────
 void VideoPlayer::AudioLoop()
 {
@@ -380,7 +396,6 @@ void VideoPlayer::AudioLoop()
     int cur_block = 0;
 
     while (!InterlockedCompareExchange(&stop_flag_, 0, 0)) {
-        // Wait for a waveOut buffer to become free
         WaitForSingleObject(wave_done_event_, 50);
 
         if (InterlockedCompareExchange(&stop_flag_, 0, 0)) break;
@@ -388,7 +403,6 @@ void VideoPlayer::AudioLoop()
             Sleep(10); continue;
         }
 
-        // Grab an audio packet from the queue
         AVPacket* apkt = nullptr;
         EnterCriticalSection(&aud_cs_);
         if (aud_q_read_ != aud_q_write_) {
@@ -399,14 +413,12 @@ void VideoPlayer::AudioLoop()
 
         if (!apkt) { Sleep(5); continue; }
 
-        // Decode
         avcodec_send_packet(adec_ctx_, apkt);
         av_packet_free(&apkt);
 
         while (avcodec_receive_frame(adec_ctx_, frame) == 0) {
             if (!swr_ctx_) break;
 
-            // Resample to s16 stereo 44100
             AudioBlock& blk = audio_blocks_[cur_block];
             uint8_t* dst[1] = { (uint8_t*)blk.data };
             int out_samples = swr_convert(
@@ -416,8 +428,6 @@ void VideoPlayer::AudioLoop()
                 frame->nb_samples);
             if (out_samples <= 0) continue;
 
-            // Submit to waveOut
-            // Unprepare if previously submitted
             if (blk.hdr.dwFlags & WHDR_PREPARED)
                 waveOutUnprepareHeader(wave_out_, &blk.hdr, sizeof(WAVEHDR));
 
@@ -439,7 +449,7 @@ void VideoPlayer::AudioLoop()
 }
 
 // ─────────────────────────────────────────────────────────────
-//  DecodeLoop — demux + video decode + push to ring buffer
+//  DecodeLoop
 // ─────────────────────────────────────────────────────────────
 void VideoPlayer::DecodeLoop()
 {
@@ -450,7 +460,6 @@ void VideoPlayer::DecodeLoop()
         return;
     }
 
-    // Scale-destination buffer (single BGRA plane)
     uint8_t*  dst_data[4]     = {};
     int       dst_linesize[4] = {};
     av_image_alloc(dst_data, dst_linesize,
@@ -460,7 +469,6 @@ void VideoPlayer::DecodeLoop()
 
     while (!InterlockedCompareExchange(&stop_flag_, 0, 0)) {
 
-        // ── Seek request ─────────────────────────────────────
         if (InterlockedCompareExchange(&seek_flag_, 0, 0)) {
             double target = seek_target_;
             InterlockedExchange(&seek_flag_, 0);
@@ -470,7 +478,6 @@ void VideoPlayer::DecodeLoop()
                           AVSEEK_FLAG_BACKWARD);
             avcodec_flush_buffers(vdec_ctx_);
             if (adec_ctx_) avcodec_flush_buffers(adec_ctx_);
-            // Drain ring so stale frames don't appear
             EnterCriticalSection(&ring_cs_);
             for (int i = 0; i < RING_SIZE; i++)
                 ring_[i].ready = false;
@@ -478,21 +485,18 @@ void VideoPlayer::DecodeLoop()
             LeaveCriticalSection(&ring_cs_);
         }
 
-        // ── Pause ────────────────────────────────────────────
         if (InterlockedCompareExchange(&paused_flag_, 0, 0)) {
             state_ = VS_PAUSED;
             Sleep(10); continue;
         }
         state_ = VS_PLAYING;
 
-        // ── Demux ────────────────────────────────────────────
         int ret = av_read_frame(fmt_ctx_, pkt);
         if (ret == AVERROR_EOF) {
             state_ = VS_EOF; break;
         }
         if (ret < 0) { Sleep(1); continue; }
 
-        // ── Audio packet → audio queue ────────────────────────
         if (pkt->stream_index == aud_stream_) {
             AVPacket* apkt = av_packet_clone(pkt);
             if (apkt) {
@@ -502,7 +506,7 @@ void VideoPlayer::DecodeLoop()
                     aud_queue_[aud_q_write_] = apkt;
                     aud_q_write_ = next;
                 } else {
-                    av_packet_free(&apkt);  // queue full, drop
+                    av_packet_free(&apkt);
                 }
                 LeaveCriticalSection(&aud_cs_);
             }
@@ -510,7 +514,6 @@ void VideoPlayer::DecodeLoop()
             continue;
         }
 
-        // ── Video packet ──────────────────────────────────────
         if (pkt->stream_index != vid_stream_) {
             av_packet_unref(pkt); continue;
         }
@@ -519,8 +522,6 @@ void VideoPlayer::DecodeLoop()
         av_packet_unref(pkt);
 
         while (avcodec_receive_frame(vdec_ctx_, frame) == 0) {
-            // ── Wait for a free ring slot ─────────────────────
-            // (non-blocking poll with back-off to avoid spinning)
             for (;;) {
                 if (InterlockedCompareExchange(&stop_flag_, 0, 0)) goto done;
                 EnterCriticalSection(&ring_cs_);
@@ -531,14 +532,12 @@ void VideoPlayer::DecodeLoop()
                 WaitForSingleObject(ring_not_full_, 10);
             }
 
-            // Convert pixel format
             sws_scale(sws_ctx_,
                       (const uint8_t* const*)frame->data,
                       frame->linesize,
                       0, vid_h_,
                       dst_data, dst_linesize);
 
-            // Write into ring slot
             EnterCriticalSection(&ring_cs_);
             RingSlot& slot = ring_[ring_write_];
             memcpy(slot.buf, dst_data[0],
@@ -551,8 +550,7 @@ void VideoPlayer::DecodeLoop()
             LeaveCriticalSection(&ring_cs_);
             SetEvent(ring_not_empty_);
 
-            // Frame-rate throttle: target ~60 fps max in decode thread
-            Sleep(4);
+            Sleep(4);  // throttle: ~60 fps max
 
             av_frame_unref(frame);
         }
@@ -579,34 +577,32 @@ DWORD WINAPI VideoPlayer::AudioThreadProc(LPVOID param)
 }
 
 // ─────────────────────────────────────────────────────────────
-//  Open  —  public entry point
+//  Open
 // ─────────────────────────────────────────────────────────────
 bool VideoPlayer::Open(const std::string& ytUrl,
                         LPDIRECT3DDEVICE9  device,
-                        const std::string& ytdlpPath)
+                        const std::string& ytdlpPath,
+                        int                qualityH)
 {
-    Close();  // safe no-op if already idle
+    Close();
 
-    dev_   = device;
-    state_ = VS_LOADING;
+    dev_       = device;
+    quality_h_ = qualityH;
+    state_     = VS_LOADING;
     InterlockedExchange(&stop_flag_,  0);
     InterlockedExchange(&seek_flag_,  0);
     InterlockedExchange(&paused_flag_,0);
 
-    // Step 1 — resolve YouTube URL via yt-dlp
     std::string videoUrl, audioUrl;
-    if (!ResolveUrl(ytdlpPath, ytUrl, videoUrl, audioUrl))
-        return false;  // state_ already set to VS_ERROR
+    if (!ResolveUrl(ytdlpPath, ytUrl, qualityH, videoUrl, audioUrl))
+        return false;
 
-    // Step 2 — open streams with libavformat
     if (!OpenStreams(videoUrl, audioUrl))
         return false;
 
-    // Step 3 — create D3D9 texture
     if (!CreateTexture(vid_w_, vid_h_))
         return false;
 
-    // Step 4 — open waveOut for audio playback
     if (adec_ctx_ && swr_ctx_) {
         WAVEFORMATEX wfx = {};
         wfx.wFormatTag      = WAVE_FORMAT_PCM;
@@ -616,8 +612,6 @@ bool VideoPlayer::Open(const std::string& ytUrl,
         wfx.nBlockAlign     = wfx.nChannels * (wfx.wBitsPerSample / 8);
         wfx.nAvgBytesPerSec = wfx.nSamplesPerSec * wfx.nBlockAlign;
 
-        // Cast via uintptr_t for safe pointer-to-integer conversion
-        // on MinGW i686 targeting XP SDK (DWORD_PTR = DWORD on x86)
         MMRESULT mr = waveOutOpen(
             &wave_out_,
             WAVE_MAPPER,
@@ -625,12 +619,10 @@ bool VideoPlayer::Open(const std::string& ytUrl,
             (DWORD_PTR)(uintptr_t)WaveOutCallback,
             (DWORD_PTR)(uintptr_t)this,
             CALLBACK_FUNCTION);
-        if (mr != MMSYSERR_NOERROR) {
-            wave_out_ = nullptr;  // audio unavailable, continue without
-        }
+        if (mr != MMSYSERR_NOERROR)
+            wave_out_ = nullptr;
     }
 
-    // Step 5 — start worker threads
     decode_thread_ = CreateThread(
         nullptr, 0, DecodeThreadProc, this, 0, nullptr);
     if (!decode_thread_) {
@@ -638,7 +630,6 @@ bool VideoPlayer::Open(const std::string& ytUrl,
         return false;
     }
     if (wave_out_) {
-        // Prime the waveOut done event so AudioLoop starts immediately
         SetEvent(wave_done_event_);
         audio_thread_ = CreateThread(
             nullptr, 0, AudioThreadProc, this, 0, nullptr);
@@ -648,9 +639,7 @@ bool VideoPlayer::Open(const std::string& ytUrl,
 }
 
 // ─────────────────────────────────────────────────────────────
-//  Update  —  called once per render frame from main thread
-//  Uploads the next ready ring-buffer frame to the D3D9 texture.
-//  Returns true if the texture was updated.
+//  Update
 // ─────────────────────────────────────────────────────────────
 bool VideoPlayer::Update()
 {
@@ -658,7 +647,6 @@ bool VideoPlayer::Update()
         state_ == VS_ERROR)
         return false;
 
-    // Check if there is a frame ready to consume
     EnterCriticalSection(&ring_cs_);
     bool has_frame = (ring_read_ != ring_write_) &&
                       ring_[ring_read_].ready;
@@ -666,10 +654,6 @@ bool VideoPlayer::Update()
 
     if (!has_frame) return false;
 
-    // ── A/V sync via waveOut position ─────────────────────────
-    // waveOutGetPosition may return in units other than TIME_BYTES
-    // on old XP audio drivers — check wType in the response and
-    // handle both TIME_BYTES and TIME_SAMPLES gracefully.
     if (wave_out_) {
         MMTIME mmt = {};
         mmt.wType = TIME_BYTES;
@@ -677,6 +661,7 @@ bool VideoPlayer::Update()
             == MMSYSERR_NOERROR)
         {
             double audio_pos_sec = 0.0;
+            bool   valid         = true;
             if (mmt.wType == TIME_BYTES) {
                 audio_pos_sec =
                     (double)mmt.u.cb
@@ -685,29 +670,23 @@ bool VideoPlayer::Update()
                                * AUDIO_SAMPLE_RATE);
             } else if (mmt.wType == TIME_SAMPLES) {
                 audio_pos_sec =
-                    (double)mmt.u.sample
-                    / (double)AUDIO_SAMPLE_RATE;
+                    (double)mmt.u.sample / (double)AUDIO_SAMPLE_RATE;
             } else if (mmt.wType == TIME_MS) {
                 audio_pos_sec = (double)mmt.u.ms / 1000.0;
+            } else {
+                valid = false;
             }
-            // else: unknown unit — skip sync check this frame
 
-            if (mmt.wType == TIME_BYTES   ||
-                mmt.wType == TIME_SAMPLES ||
-                mmt.wType == TIME_MS)
-            {
+            if (valid) {
                 EnterCriticalSection(&ring_cs_);
                 double vid_pts = ring_[ring_read_].pts;
                 LeaveCriticalSection(&ring_cs_);
-
                 double diff = vid_pts - audio_pos_sec;
-                if (diff > 0.1) return false;   // video ahead — wait
-                // If diff < -0.1 video is behind — fall through and display
+                if (diff > 0.1) return false;  // video ahead — wait
             }
         }
     }
 
-    // Upload the frame
     EnterCriticalSection(&ring_cs_);
     RingSlot& slot = ring_[ring_read_];
     bool ok = UploadFrame(slot);
@@ -745,22 +724,19 @@ void VideoPlayer::Seek(float t)
 }
 
 // ─────────────────────────────────────────────────────────────
-//  Close  —  stop threads, release all resources
+//  Close
 // ─────────────────────────────────────────────────────────────
 void VideoPlayer::Close()
 {
     if (state_ == VS_IDLE) return;
 
-    // Signal threads to stop
     InterlockedExchange(&stop_flag_, 1);
     SetEvent(ring_not_empty_);
     SetEvent(ring_not_full_);
     SetEvent(wave_done_event_);
 
-    // Stop audio immediately so waveOut callbacks don't fire after cleanup
     if (wave_out_) {
         waveOutReset(wave_out_);
-        // Unprepare any prepared headers
         for (int i = 0; i < AUDIO_BLOCK_COUNT; i++) {
             if (audio_blocks_[i].hdr.dwFlags & WHDR_PREPARED)
                 waveOutUnprepareHeader(wave_out_,
@@ -770,7 +746,6 @@ void VideoPlayer::Close()
         wave_out_ = nullptr;
     }
 
-    // Wait for threads
     if (decode_thread_) {
         WaitForSingleObject(decode_thread_, 5000);
         CloseHandle(decode_thread_);
@@ -782,21 +757,18 @@ void VideoPlayer::Close()
         audio_thread_ = nullptr;
     }
 
-    // Free FFmpeg resources
     if (sws_ctx_)  { sws_freeContext(sws_ctx_); sws_ctx_ = nullptr; }
     if (swr_ctx_)  { swr_free(&swr_ctx_); }
     if (vdec_ctx_) { avcodec_free_context(&vdec_ctx_); }
     if (adec_ctx_) { avcodec_free_context(&adec_ctx_); }
     if (fmt_ctx_)  { avformat_close_input(&fmt_ctx_); }
 
-    // Free ring buffer memory
     for (int i = 0; i < RING_SIZE; i++) {
         if (ring_[i].buf) { free(ring_[i].buf); ring_[i].buf = nullptr; }
         ring_[i].ready = false;
     }
     ring_read_ = ring_write_ = 0;
 
-    // Release audio packet queue
     EnterCriticalSection(&aud_cs_);
     while (aud_q_read_ != aud_q_write_) {
         if (aud_queue_[aud_q_read_])
@@ -805,13 +777,12 @@ void VideoPlayer::Close()
     }
     LeaveCriticalSection(&aud_cs_);
 
-    // Release D3D9 texture
     if (tex_) { tex_->Release(); tex_ = nullptr; }
 
-    // Reset all fields
     vid_stream_ = aud_stream_ = -1;
     vid_w_ = vid_h_ = tex_w_ = tex_h_ = 0;
     dur_sec_ = pos_sec_ = vid_tb_ = aud_tb_ = 0.0;
+    quality_h_ = 360;
     aud_q_read_ = aud_q_write_ = 0;
     ZeroMemory(audio_blocks_, sizeof(audio_blocks_));
     ZeroMemory(err_buf_, sizeof(err_buf_));

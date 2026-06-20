@@ -34,6 +34,30 @@ enum VideoState {
     VS_EOF
 };
 
+// ── Quality preset ───────────────────────────────────────────
+// Maps the GUI quality selector to a maximum video height.
+// 0 means "auto" (no height cap — let yt-dlp pick the best
+// H.264/MP4 it can find).
+struct QualityPreset {
+    const char* label;   // shown in the GUI selector
+    int         height;  // max height filter, 0 = no cap
+};
+
+// Must be kept in sync with g_qualityOpts in main.cpp.
+static const QualityPreset kQualityPresets[] = {
+    { "2160p", 2160 },
+    { "1080p", 1080 },
+    { "720p",   720 },
+    { "480p",   480 },
+    { "360p",   360 },  // default
+    { "Auto",     0 },
+};
+static const int kQualityPresetCount =
+    (int)(sizeof(kQualityPresets) / sizeof(kQualityPresets[0]));
+
+// Default preset index (360p)
+#define QUALITY_DEFAULT_IDX 4
+
 // ── Audio double-buffer ───────────────────────────────────────
 #define AUDIO_BLOCK_SAMPLES  4096
 #define AUDIO_BLOCK_COUNT    2
@@ -49,13 +73,16 @@ struct AudioBlock {
 struct VideoPlayer {
     // ── Public API (call from Win32 main thread) ──────────────
 
-    // Open a YouTube URL.  ytdlpPath and ffmpegBinDir are paths to
-    // yt-dlp.exe and the directory containing ffmpeg DLLs / the
-    // ffmpeg executable (used only for --get-url; decoding goes
-    // through libavformat loaded at compile time).
+    // Open a YouTube URL.
+    //   ytdlpPath  : full path to yt-dlp.exe
+    //   device     : D3D9 device for texture creation
+    //   qualityH   : maximum video height to request (e.g. 360).
+    //                Pass 0 for "auto" (no height cap).
+    //                Default = 360 so it works on low-end hardware.
     bool Open(const std::string& ytUrl,
               LPDIRECT3DDEVICE9  device,
-              const std::string& ytdlpPath);
+              const std::string& ytdlpPath,
+              int                qualityH = 360);
 
     // Must be called once per render frame on the main thread.
     // Returns true when a new frame was uploaded to the texture.
@@ -69,18 +96,19 @@ struct VideoPlayer {
     void Seek(float t);  // 0.0 – 1.0 normalised
 
     // Getters
-    LPDIRECT3DTEXTURE9 GetTexture() const { return tex_; }
-    VideoState         GetState()   const { return state_; }
-    double             GetPos()     const { return pos_sec_; }   // seconds
-    double             GetDur()     const { return dur_sec_; }   // seconds
-    int                GetWidth()   const { return vid_w_; }
-    int                GetHeight()  const { return vid_h_; }
+    LPDIRECT3DTEXTURE9 GetTexture()    const { return tex_; }
+    VideoState         GetState()      const { return state_; }
+    double             GetPos()        const { return pos_sec_; }   // seconds
+    double             GetDur()        const { return dur_sec_; }   // seconds
+    int                GetWidth()      const { return vid_w_; }
+    int                GetHeight()     const { return vid_h_; }
+    int                GetQualityH()   const { return quality_h_; }
     // Normalised position 0-1 for the seekbar
-    float              GetSeekPos() const {
+    float              GetSeekPos()    const {
         if (dur_sec_ <= 0.0) return 0.f;
         return (float)(pos_sec_ / dur_sec_);
     }
-    const char*        GetError()   const { return err_buf_; }
+    const char*        GetError()      const { return err_buf_; }
 
     // ── Constructor / destructor ──────────────────────────────
     VideoPlayer();
@@ -95,6 +123,9 @@ private:
     LPDIRECT3DDEVICE9  dev_  = nullptr;
     LPDIRECT3DTEXTURE9 tex_  = nullptr;
     int                tex_w_ = 0, tex_h_ = 0;
+
+    // ── Quality requested ────────────────────────────────────
+    int quality_h_ = 360;   // height cap passed to yt-dlp
 
     // ── Video decode state ───────────────────────────────────
     AVFormatContext* fmt_ctx_  = nullptr;
@@ -111,34 +142,32 @@ private:
     double           aud_tb_  = 0.0;
 
     // ── Ring buffer (video frames ready for upload) ───────────
-    // Each slot: BGRA plane, vid_w_ * vid_h_ * 4 bytes
     static const int RING_SIZE = 4;
     struct RingSlot {
-        unsigned char* buf    = nullptr;  // BGRA pixels
+        unsigned char* buf    = nullptr;
         int            w      = 0, h = 0;
-        double         pts    = 0.0;      // seconds
+        double         pts    = 0.0;
         bool           ready  = false;
     };
     RingSlot  ring_[RING_SIZE];
-    int       ring_write_ = 0;  // written by decode thread
-    int       ring_read_  = 0;  // consumed by main thread
+    int       ring_write_ = 0;
+    int       ring_read_  = 0;
     CRITICAL_SECTION ring_cs_;
-    HANDLE    ring_not_empty_;  // auto-reset event
-    HANDLE    ring_not_full_;   // auto-reset event
+    HANDLE    ring_not_empty_;
+    HANDLE    ring_not_full_;
 
     // ── Worker threads ────────────────────────────────────────
-    HANDLE  decode_thread_ = nullptr;  // video+audio demux/decode
-    HANDLE  audio_thread_  = nullptr;  // waveOut feeder
-    volatile LONG stop_flag_  = 0;     // set to 1 to signal threads
-    volatile LONG seek_flag_  = 0;
+    HANDLE  decode_thread_ = nullptr;
+    HANDLE  audio_thread_  = nullptr;
+    volatile LONG stop_flag_   = 0;
+    volatile LONG seek_flag_   = 0;
     volatile double seek_target_ = 0.0;
-    volatile LONG paused_flag_  = 0;
+    volatile LONG paused_flag_ = 0;
 
     // ── Audio state ───────────────────────────────────────────
     HWAVEOUT    wave_out_  = nullptr;
     AudioBlock  audio_blocks_[AUDIO_BLOCK_COUNT];
-    HANDLE      wave_done_event_ = nullptr;  // signalled by waveOutProc
-    // Audio packet queue (simple ring of pointers to AVPacket)
+    HANDLE      wave_done_event_ = nullptr;
     static const int AUD_QUEUE = 64;
     AVPacket*  aud_queue_[AUD_QUEUE];
     int        aud_q_write_ = 0, aud_q_read_ = 0;
@@ -153,6 +182,7 @@ private:
     // ── Private helpers ──────────────────────────────────────
     bool        ResolveUrl(const std::string& ytdlpPath,
                             const std::string& ytUrl,
+                            int                qualityH,
                             std::string& outVideoUrl,
                             std::string& outAudioUrl);
     bool        OpenStreams(const std::string& videoUrl,
@@ -161,7 +191,7 @@ private:
     bool        UploadFrame(const RingSlot& slot);
     void        SetError(const char* msg);
 
-    // ── Thread entry points (static trampolines) ──────────────
+    // ── Thread entry points ───────────────────────────────────
     static DWORD WINAPI DecodeThreadProc(LPVOID param);
     static DWORD WINAPI AudioThreadProc(LPVOID param);
     static void  CALLBACK WaveOutCallback(HWAVEOUT, UINT, DWORD_PTR,
@@ -172,3 +202,6 @@ private:
 
 // ── Global singleton (extern — defined in video_player.cpp) ──
 extern VideoPlayer g_player;
+
+// ── Global yt-dlp path (set by YtDlp_EnsureAvailable) ────────
+extern std::string g_ytdlp_path;
