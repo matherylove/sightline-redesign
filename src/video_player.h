@@ -1,7 +1,8 @@
 // ============================================================
-//  video_player.h  —  Sightline PoC
-//  FFmpeg XP-mod + nicolaasjan/yt-dlp playback engine
-//  Target: Windows XP SP3 x86 and later
+//  video_player.h  —  Sightline PoC video backend
+//  Target: Windows XP SP3 x86 (WINVER=0x0501) and later
+//  FFmpeg: 7.1 xpmod-sse win32 (static libs in ffmpeg-xp/lib)
+//  yt-dlp: nicolaasjan fork  (yt-dlp.exe beside the binary)
 // ============================================================
 #pragma once
 
@@ -13,132 +14,134 @@
 #include <windows.h>
 #include <d3d9.h>
 #include <string>
-#include <vector>
 
-// ── Quality levels (index matches g_qualityOpts in main.cpp) ─
-// 0=360p  1=480p  2=720p  3=1080p  4=2160p
-enum VideoQuality {
-    VQ_360P  = 0,
-    VQ_480P  = 1,
-    VQ_720P  = 2,
-    VQ_1080P = 3,
-    VQ_2160P = 4,
-    VQ_COUNT = 5
-};
-
-// ── Player state ──────────────────────────────────────────────
+// ─── Video player states ──────────────────────────────────────
 enum VideoState {
-    VS_IDLE    = 0,   // nothing loaded
-    VS_LOADING = 1,   // yt-dlp resolving URL
-    VS_PLAYING = 2,
-    VS_PAUSED  = 3,
-    VS_ERROR   = 4,
-    VS_EOF     = 5
+    VS_IDLE    = 0,
+    VS_LOADING,   // yt-dlp resolving URL
+    VS_PLAYING,
+    VS_PAUSED,
+    VS_EOF,
+    VS_ERROR
 };
 
-// ── Internal frame buffer ─────────────────────────────────────
-struct VideoFrame {
-    unsigned char* data;  // BGRA row-major
-    int            width;
-    int            height;
+// ─── One decoded RGB frame sitting in the ring buffer ─────────
+struct DecodedFrame {
+    unsigned char* rgb;   // width*height*3 bytes (RGB24, top-down)
     double         pts;   // presentation time in seconds
+    int            w, h;
 };
 
-// ── Main player struct ────────────────────────────────────────
+// ─── Public interface ─────────────────────────────────────────
+// All methods except Update() may be called from any thread.
+// Update() MUST be called from the D3D9 render thread (main thread).
 struct VideoPlayer {
-    // ── Public API (call from main / GUI thread) ─────────────
-
-    // Initialize paths once at startup
-    void Init(const std::string& ytdlpPath,
-              const std::string& ffmpegDir);
-
-    // Open a YouTube URL at the given quality.
-    // Spins up yt-dlp + decode thread asynchronously.
-    // Safe to call while already playing — closes previous first.
-    void Open(const std::string& url, VideoQuality q = VQ_360P);
-
-    // Change quality on the fly — re-opens the same URL
-    void SetQuality(VideoQuality q);
-
-    // Close / stop and release all resources
-    void Close();
-
-    // Pause / resume
-    void SetPaused(bool paused);
-
-    // Seek to normalised position [0,1]
-    void Seek(float t);
-
-    // Must be called once per render frame from the GUI thread.
-    // Uploads next decoded frame to the D3D9 texture if available.
-    // Returns true if the texture was updated.
-    bool Update(LPDIRECT3DDEVICE9 dev);
-
-    // D3D9 device lost / reset hooks
-    void OnLostDevice();
-    void OnResetDevice(LPDIRECT3DDEVICE9 dev);
-
-    // ── Getters ───────────────────────────────────────────────
-    LPDIRECT3DTEXTURE9 GetTexture()  const { return tex_; }
-    VideoState         GetState()    const { return (VideoState)state_; }
-    double             GetPos()      const { return pos_; }
-    double             GetDur()      const { return dur_; }
-    int                GetWidth()    const { return vidW_; }
-    int                GetHeight()   const { return vidH_; }
-    const char*        GetError()    const { return errMsg_; }
-    VideoQuality       GetQuality()  const { return curQ_; }
-
-    // ctor / dtor
+    // ── Lifecycle ─────────────────────────────────────────────
     VideoPlayer();
     ~VideoPlayer();
 
+    // Open a YouTube URL.  Spawns yt-dlp to resolve, then
+    // starts the decode thread.
+    //   ytUrl     — full YouTube watch URL
+    //   dev       — Direct3D9 device (for texture creation)
+    //   ytdlpExe  — path to yt-dlp.exe (e.g. "yt-dlp.exe")
+    //   ffmpegBin — unused; FFmpeg is linked statically
+    bool Open(const std::string& ytUrl,
+              LPDIRECT3DDEVICE9 dev,
+              const std::string& ytdlpExe = "yt-dlp.exe",
+              const std::string& ffmpegBin = "");
+
+    void Close();          // Stop + release all resources
+    void SetPaused(bool p);
+    // Seek to fraction 0..1 of total duration
+    void Seek(float fraction);
+
+    // ── Per-frame call (render thread only) ───────────────────
+    // Returns true if the D3D9 texture was updated this frame.
+    bool Update(LPDIRECT3DDEVICE9 dev);
+
+    // ── Device-lost handling ──────────────────────────────────
+    void OnDeviceLost();    // call from ResetDevice() before Reset
+    void OnDeviceReset(LPDIRECT3DDEVICE9 dev); // after Reset
+
+    // ── Getters ───────────────────────────────────────────────
+    LPDIRECT3DTEXTURE9 GetTexture()  const { return tex_; }
+    VideoState         GetState()    const { return state_; }
+    double             GetPos()      const { return posSeconds_; }
+    double             GetDur()      const { return durSeconds_; }
+    int                GetWidth()    const { return vidW_; }
+    int                GetHeight()   const { return vidH_; }
+    const std::string& GetError()    const { return errorMsg_; }
+    const std::string& GetTitle()    const { return title_; }
+
+    // Progress 0..1  (meaningful during VS_PLAYING / VS_PAUSED)
+    float GetProgress() const {
+        if(durSeconds_ <= 0.0) return 0.f;
+        return (float)(posSeconds_ / durSeconds_);
+    }
+
 private:
-    // ── Paths ─────────────────────────────────────────────────
-    char ytdlpPath_[MAX_PATH];
-    char ffmpegDir_[MAX_PATH]; // unused for linking but kept for runtime dll check
+    // ── Internal helpers ──────────────────────────────────────
 
-    // ── State (volatile: written by decode thread, read by GUI thread) ──
-    volatile LONG state_;    // cast to VideoState
-    volatile LONG seekReq_;  // 0=none, 1=pending
-    float         seekPos_;  // normalised [0,1]  — write under cs_
-    volatile LONG pauseReq_; // 0=playing, 1=paused
+    // Spawn yt-dlp.exe and read its stdout into outUrls.
+    // Returns true when at least one URL is found.
+    bool ResolveYtUrl(const std::string& ytUrl,
+                      std::string& videoUrl,
+                      std::string& audioUrl);
 
-    double pos_;
-    double dur_;
-    int    vidW_;
-    int    vidH_;
-    char   errMsg_[256];
-    char   curUrl_[2048];
-    VideoQuality curQ_;
+    // The decode + audio thread entry point (static trampoline)
+    static DWORD WINAPI DecodeThreadProc(LPVOID param);
+    void DecodeLoop();   // actual loop running in the thread
 
-    // ── D3D9 texture ─────────────────────────────────────────
-    LPDIRECT3DTEXTURE9 tex_;    // present texture  (D3DPOOL_MANAGED)
-    int texW_;
-    int texH_;
+    // Upload one RGB24 frame to the D3D9 managed texture
+    bool UploadFrame(LPDIRECT3DDEVICE9 dev,
+                     const unsigned char* rgb, int w, int h);
 
-    // ── Ring buffer: 2 frames  (decode writes, GUI reads) ────
-    static const int kBufCount = 2;
-    VideoFrame buf_[kBufCount];
-    volatile LONG writeIdx_;  // decode thread advances this
-    volatile LONG readIdx_;   // GUI thread advances this
-    CRITICAL_SECTION cs_;
+    // Audio output via waveOut (XP-compatible)
+    void AudioInit(int sampleRate, int channels);
+    void AudioFeed(const short* pcm, int frames);
+    void AudioClose();
+
+    // ── Ring buffer (3 slots) ─────────────────────────────────
+    static const int kRingSize = 3;
+    DecodedFrame     ring_[kRingSize];
+    volatile LONG    writeIdx_;  // written by decode thread
+    volatile LONG    readIdx_;   // read  by render thread
+    CRITICAL_SECTION ringCs_;
+
+    // ── State ─────────────────────────────────────────────────
+    volatile VideoState state_;
+    std::string         errorMsg_;
+    std::string         title_;
+    std::string         ytdlpExe_;
+    std::string         videoUrl_;
+    std::string         audioUrl_;
 
     // ── Decode thread ─────────────────────────────────────────
-    HANDLE decodeThread_;
-    volatile LONG stopFlag_;  // set to 1 to ask thread to exit
+    HANDLE        decodeThread_;
+    volatile LONG stopFlag_;    // set to 1 to signal the thread to exit
+    volatile LONG pauseFlag_;   // set to 1 when paused
+    volatile LONG seekFlag_;    // set to 1 when a seek is pending
+    double        seekTarget_;  // seconds (written before seekFlag_)
 
-    // ── Internal helpers ──────────────────────────────────────
-    bool ResolveUrl(const char* ytUrl, VideoQuality q,
-                    char* outVideoUrl, int videoUrlLen,
-                    char* outAudioUrl, int audioUrlLen);
-    void AllocFrameBuffer(int idx, int w, int h);
-    void FreeFrameBuffers();
-    void SetState(VideoState s);
-    void SetError(const char* msg);
-    static DWORD WINAPI DecodeThreadProc(LPVOID param);
-    void DecodeLoop();
-    static const char* QualityToHeightFilter(VideoQuality q);
+    // ── Timing ────────────────────────────────────────────────
+    volatile double posSeconds_;
+    volatile double durSeconds_;
+
+    // ── Video dimensions ──────────────────────────────────────
+    int vidW_, vidH_;
+
+    // ── D3D9 texture ──────────────────────────────────────────
+    LPDIRECT3DTEXTURE9 tex_;
+    int                texW_, texH_;
+
+    // ── waveOut audio ─────────────────────────────────────────
+    HWAVEOUT   hWaveOut_;
+    static const int kWaveBufs  = 2;
+    static const int kWaveSamples = 4096; // frames per buffer
+    WAVEHDR    waveHdr_[kWaveBufs];
+    short*     waveBuf_[kWaveBufs];
+    int        waveBufIdx_;
+    int        audioChannels_;
+    int        audioSampleRate_;
 };
-
-// Global instance — defined in video_player.cpp, declared here
-extern VideoPlayer g_player;
